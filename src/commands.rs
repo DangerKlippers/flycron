@@ -62,7 +62,7 @@ pub fn allocate_oids(_count: u8) {}
 pub fn debug_nop() {}
 
 #[klipper_constant]
-const MCU: &str = "beacon";
+const MCU: &str = "flycron";
 
 #[klipper_constant]
 const STATS_SUMSQ_BASE: u32 = 256;
