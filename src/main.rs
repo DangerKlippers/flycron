@@ -6,6 +6,8 @@ mod chipid;
 mod clock;
 mod commands;
 mod detail;
+mod stepper_emulation;
+mod trsync;
 mod usb;
 
 use stm32f4xx_hal as hal;
