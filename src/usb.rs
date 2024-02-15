@@ -30,9 +30,9 @@ impl UsbDevice {
     ) -> Self {
         let serial = CdcAcmClass::new(allocator, USB_MAX_PACKET_SIZE as u16);
         let strings = StringDescriptors::new(LangID::EN)
-            .product("Flying Gantry")
+            .product("Flycron")
             .manufacturer("Armchair Heavy Industries")
-            .serial_number("test");
+            .serial_number(crate::chipid::get_chipid());
         let device = UsbDeviceBuilder::new(allocator, UsbVidPid(0x1d50, 0x614e))
             .composite_with_iads()
             .strings(&[strings])

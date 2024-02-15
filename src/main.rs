@@ -2,11 +2,13 @@
 #![no_std]
 #![feature(type_alias_impl_trait)]
 
-mod detail;
-use stm32f4xx_hal as hal;
+mod chipid;
 mod clock;
 mod commands;
+mod detail;
 mod usb;
+
+use stm32f4xx_hal as hal;
 
 #[rtic::app(
     device = crate::hal::pac,
