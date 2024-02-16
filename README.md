@@ -21,24 +21,24 @@ The overall system architeture is the following:
 ---
 title: Flycron Architecture
 ---
-graph TB
-    subgraph MCU
-    dshot[DSHOT1200]
-    stepper[Stepper emulation]
-    pid[PID loop]
-    enc[Encoder]
-    timer[Timer]
-    end
-    quad[Quadrature]
-    esc[ESC]
-    klippy[Klipper]
+graph TB;
+    subgraph MCU;
+    dshot[DSHOT1200];
+    stepper[Stepper emulation];
+    pid[PID loop];
+    enc[Encoder];
+    timer[Timer];
+    end;
+    quad[Quadrature];
+    esc[ESC];
+    klippy[Klipper];
 
-    stepper -- position/velocity @ time --> pid
-    enc -- position --> pid
-    pid -- throttle --> dshot
-    dshot -- throttle 0-2000--> esc
-    quad -- A/B--> enc
-    klippy -- queue_step,\n set_next_step_dir,\n others--> stepper
+    stepper -- position/velocity @ time --> pid;
+    enc -- position --> pid;
+    pid -- throttle --> dshot;
+    dshot -- throttle 0-2000--> esc;
+    quad -- A/B--> enc;
+    klippy -- queue_step,\n set_next_step_dir,\n others--> stepper;
 ```
 
 The MCU system is implemented in Rust using the RTICv2 firmware. It runs on an STM32F411CEU, hosted on the Black Pill board.
