@@ -21,7 +21,7 @@ The overall system architeture is the following:
 ---
 title: Flycron Architecture
 ---
-flowchart TB
+graph TB
     subgraph MCU
     dshot[DSHOT1200]
     stepper[Stepper emulation]
