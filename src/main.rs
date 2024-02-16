@@ -19,13 +19,16 @@ use stm32f4xx_hal as hal;
 mod app {
     use core::mem::MaybeUninit;
 
-    use crate::{clock::Clock, create_stm32_tim2_monotonic_token, hal::prelude::*, usb::*};
+    use crate::{clock::Clock, clock::Duration, create_stm32_tim2_monotonic_token, hal::prelude::*, usb::*};
     use bbqueue::BBBuffer;
+
+    use stm32f4xx_hal::qei::Qei;
 
     #[shared]
     struct Shared {
         usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
+        encoder: Qei<stm32f4xx_hal::pac::TIM5>,
     }
 
     #[local]
@@ -80,11 +83,15 @@ mod app {
         Clock::start(cx.device.TIM2, token);
 
         let command_state = crate::commands::CommandState::init();
-
+        
+        let encoder = Qei::new(cx.device.TIM5, (gpioa.pa0.into_pull_up_input(), gpioa.pa1.into_pull_up_input()));
+        
+        encoder_read::spawn().ok();
         (
             Shared {
                 usb_dev,
                 command_state,
+                encoder,
             },
             Local {},
         )
@@ -115,6 +122,15 @@ mod app {
                 usb_dev.pump_write();
             }
         });
+    }
+    #[task(priority = 1, shared = [&encoder])]
+    async fn encoder_read(cx: encoder_read::Context) {
+        loop {
+            Clock::delay(Duration::millis(10)).await;
+            let count = cx.shared.encoder.count();
+            defmt::info!("Count: {}", count);
+        }
+
     }
 }
 
