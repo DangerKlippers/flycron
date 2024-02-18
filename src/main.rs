@@ -6,36 +6,37 @@ mod chipid;
 mod clock;
 mod commands;
 mod detail;
+mod dshot;
 mod stepper_emulation;
 mod trsync;
 mod usb;
-mod dshot;
 
 use stm32f4xx_hal as hal;
 
 #[rtic::app(
     device = crate::hal::pac,
-    dispatchers = [I2C1_EV, I2C3_EV]
+    dispatchers = [I2C1_EV, I2C1_ER, I2C2_EV, I2C2_ER, I2C3_EV, I2C3_ER],
 )]
 mod app {
-    use core::mem::MaybeUninit;
-    use crate::dshot::Dshot;
-    use crate::{clock::Clock, clock::Duration, create_stm32_tim2_monotonic_token, hal::prelude::*, usb::*};
+    use crate::{
+        clock::{Clock, Duration},
+        create_stm32_tim2_monotonic_token,
+        dshot::{DShotSpeed, Dshot},
+        hal::prelude::*,
+        hal::{bb, pac, qei::Qei},
+        usb::*,
+    };
     use bbqueue::BBBuffer;
-
-    use stm32f4xx_hal::qei::Qei;
-    use stm32f4xx_hal::bb;
-    use stm32f4xx_hal::dma::StreamsTuple;
-    use stm32f4xx_hal::pac;
-    use stm32f4xx_hal::pac::TIM3;
-
+    use core::mem::MaybeUninit;
+    use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
     #[shared]
     struct Shared {
         usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
         encoder: Qei<stm32f4xx_hal::pac::TIM5>,
-        dshot: Dshot
+        dshot: Dshot,
+        dshot_complete: Signal<CriticalSectionRawMutex, ()>,
     }
 
     #[local]
@@ -90,11 +91,17 @@ mod app {
         Clock::start(cx.device.TIM2, token);
 
         let command_state = crate::commands::CommandState::init();
-        
-        let encoder = Qei::new(cx.device.TIM5, (gpioa.pa0.into_pull_up_input(), gpioa.pa1.into_pull_up_input()));
-        
+
+        let encoder = Qei::new(
+            cx.device.TIM5,
+            (
+                gpioa.pa0.into_pull_up_input(),
+                gpioa.pa1.into_pull_up_input(),
+            ),
+        );
+
         // encoder_read::spawn().ok();
-        
+
         //(tim3, apb1enr, apb1rstr, 1u8, pclk1, ppre1),
         let bit = 1u8;
         unsafe {
@@ -103,18 +110,25 @@ mod app {
             bb::set(&rcc.apb1rstr, bit);
             bb::clear(&rcc.apb1rstr, bit);
         }
-        let clk = clocks.timclk1().to_MHz();
-        gpiob.pb4.into_alternate::<2>().into_push_pull_output();
+        let clk = clocks.timclk1();
 
-        let dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
-        
-        // dshot_loop::spawn().ok();
+        let out = gpiob.pb4.into_push_pull_output();
+        let dshot = crate::dshot::Dshot::new(
+            cx.device.DMA1,
+            cx.device.TIM3,
+            out,
+            clk,
+            DShotSpeed::Speed1200kHz,
+        );
+
+        dshot_loop::spawn().ok();
         (
             Shared {
                 usb_dev,
                 command_state,
                 encoder,
-                dshot: dshot
+                dshot,
+                dshot_complete: Signal::new(),
             },
             Local {},
         )
@@ -146,18 +160,24 @@ mod app {
             }
         });
     }
-    #[task(priority = 1, shared = [dshot])]
+
+    #[task(priority = 8, shared = [dshot, &dshot_complete])]
     async fn dshot_loop(mut cx: dshot_loop::Context) {
+        let mut cnt = 0;
+        let mut last_report = Clock::now();
         loop {
-            Clock::delay(Duration::millis(1000)).await;
-            // cx.shared.dshot.lock(|dshot| dshot.set_throttle(0));
-            // cx.shared.dshot.lock(|dshot| dshot.transmit_frame());
-           
-            
-            let count = cx.shared.dshot.lock(|dshot| dshot.check_timer_count());
-            let compare = cx.shared.dshot.lock(|dshot| dshot.check_timer_compare());
-            defmt::info!("Count: {}", count);
-            defmt::info!("Compare: {}", compare);
+            cx.shared
+                .dshot
+                .lock(|dshot| dshot.send_throttle(48 + cnt % 2000));
+            cx.shared.dshot_complete.wait().await;
+            cnt += 1;
+
+            let now = Clock::now();
+            if now > last_report + crate::clock::Duration::millis(1000) {
+                last_report = now;
+                defmt::info!("COUNT {}", cnt);
+                cnt = 0;
+            }
         }
     }
 
@@ -167,6 +187,13 @@ mod app {
             Clock::delay(Duration::millis(10)).await;
             let count = cx.shared.encoder.count();
             defmt::info!("Count: {}", count);
+        }
+    }
+
+    #[task(binds = DMA1_STREAM4, priority = 9, shared = [dshot, &dshot_complete])]
+    fn dshot_dma_finish(mut cx: dshot_dma_finish::Context) {
+        if cx.shared.dshot.lock(|dshot| dshot.on_interrupt()) {
+            cx.shared.dshot_complete.signal(());
         }
     }
 }

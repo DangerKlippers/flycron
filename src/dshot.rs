@@ -1,27 +1,36 @@
-
-
 use core::mem;
-use stm32f4xx_hal::bb;
-use stm32f4xx_hal::gpio::gpiob::PB4;
-use stm32f4xx_hal::gpio::Alternate;
-use stm32f4xx_hal::gpio::Pin;
-use stm32f4xx_hal::pac::TIM3;
-use fugit::RateExtU32;
-use stm32f4xx_hal::dma;
-use stm32f4xx_hal::pac;
-use stm32f4xx_hal::pac::DMA1;
-use stm32f4xx_hal::pac::RCC;
-use stm32f4xx_hal::rcc::Rcc;
-use stm32f4xx_hal::rcc::RccExt;
-use stm32f4xx_hal::timer;
-use stm32f4xx_hal::rcc as hal_rcc;
+use fugit::HertzU32;
+use stm32f4xx_hal::{
+    bb,
+    dma::{self, DMAError, DmaFlag},
+    gpio::PushPull,
+    pac::Interrupt,
+    pac::{tim3, DMA1, RCC, TIM3},
+    prelude::*,
+    timer::{self, CPin},
+    ClearFlags, ReadFlags,
+};
 
 use crate::hal::rcc::{Enable, Reset};
 
-pub const DSHOT_150_MHZ: u32 = 3;
-pub const DSHOT_300_MHZ: u32 = 6;
-pub const DSHOT_600_MHZ: u32 = 12;
-pub const DSHOT_1200_MHZ: u32 = 24;
+#[derive(defmt::Format, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum DShotSpeed {
+    Speed150kHz,
+    Speed300kHz,
+    Speed600kHz,
+    Speed1200kHz,
+}
+
+impl From<DShotSpeed> for HertzU32 {
+    fn from(value: DShotSpeed) -> Self {
+        match value {
+            DShotSpeed::Speed150kHz => HertzU32::kHz(150),
+            DShotSpeed::Speed300kHz => HertzU32::kHz(300),
+            DShotSpeed::Speed600kHz => HertzU32::kHz(600),
+            DShotSpeed::Speed1200kHz => HertzU32::kHz(1200),
+        }
+    }
+}
 
 pub const DMA_BUFFER_LEN: usize = DSHOT_BUFFER_LEN + 2;
 const DSHOT_BUFFER_LEN: usize = 16;
@@ -29,15 +38,28 @@ const DSHOT_BIT_LEN: u32 = 20;
 const DSHOT_BIT_0: u16 = 8;
 const DSHOT_BIT_1: u16 = 16;
 
-pub struct Dshot{
-    dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &'static mut [u16; 18]>,
-    throttle: u16,
-    buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
-    timer: TIM3
+type DshotDmaTransfer = dma::Transfer<
+    dma::StreamX<DMA1, 4>,
+    5,
+    timer::CCR<TIM3, 0>,
+    dma::MemoryToPeripheral,
+    &'static mut [u16; 18],
+>;
+
+pub struct Dshot {
+    dma_transfer: DshotDmaTransfer,
+    idle_buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
+    timer: TIM3,
 }
 
 impl Dshot {
-    pub fn new(dma1: DMA1, tim: TIM3, clk: u32) -> Dshot{
+    pub fn new(
+        dma1: DMA1,
+        timer: TIM3,
+        output_pin: impl Into<<TIM3 as CPin<0>>::Ch<PushPull>>,
+        clk: HertzU32,
+        speed: DShotSpeed,
+    ) -> Dshot {
         unsafe {
             let rcc = &(*RCC::ptr());
             TIM3::enable(rcc);
@@ -45,101 +67,80 @@ impl Dshot {
         }
 
         let dma1_streams = dma::StreamsTuple::new(dma1);
-        
-        
-        tim.ccmr1_output()
-            .modify(|_, w| w.oc1pe().set_bit().oc1m().pwm_mode1());
-        tim.ccmr1_output()
-            .modify(|_, w| w.oc2pe().set_bit().oc2m().pwm_mode1());
-        // tim.ccmr2_output()
-        //     .modify(|_, w| w.oc3pe().set_bit().oc3m().pwm_mode1());
-        // tim.ccmr2_output()
-        //     .modify(|_, w| w.oc4pe().set_bit().oc4m().pwm_mode1());
 
-        
-        tim.cr1.modify(|_, w| w.arpe().set_bit());
-
-        let freq = DSHOT_600_MHZ;
-        defmt::info!("clk: {}", clk);
-        defmt::info!("freq: {}", freq);
-        tim.psc
-            .write(|w| w.psc().bits((clk / freq - 1) as u16));
-        tim.arr.write(|w| unsafe { w.bits(DSHOT_BIT_LEN) });
-
-        tim.cr1.modify(|_, w| w.urs().set_bit());
-        tim.egr.write(|w| w.ug().set_bit());
-        tim.cr1.modify(|_, w| w.urs().clear_bit());
-
-
-        tim.cr1.write(|w| {
-            w.cms()
-                .bits(0b00)
-                .dir()
-                .clear_bit()
-                .opm()
-                .clear_bit()
-                .cen()
-                .set_bit()
+        timer.ccmr1_output().modify(|_, w| {
+            w.oc1pe().set_bit();
+            w.oc1fe().set_bit();
+            w.oc1m().pwm_mode1()
         });
-        unsafe {
-            bb::set(&(*TIM3::ptr()).ccer, 0);
-        }
-        tim.ccer.modify(|_, w| w.cc1e().set_bit());
-        tim.ccer.modify(|_, w| w.cc2e().set_bit());
-        tim.ccer.modify(|_, w| w.cc3e().set_bit());
-        tim.ccer.modify(|_, w| w.cc4e().set_bit());
-        unsafe {
-            (*tim).cnt.modify(|_, w| w.bits(0));
-            (*tim).dier.modify(|_, w| w.cc1de().enabled());
-        }
-        tim.ccr1().modify(|_, w| w.ccr().variant(10));
 
-        let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(unsafe { mem::transmute_copy(&tim) });
+        let speed: HertzU32 = speed.into();
+        let psc = clk.to_Hz() / speed.to_Hz() / DSHOT_BIT_LEN;
+        timer.psc.write(|w| w.psc().bits((psc - 1) as u16));
+        timer.arr.write(|w| w.arr().variant(DSHOT_BIT_LEN as u16));
+
+        timer.cr1.write(|w| {
+            w.cms().variant(tim3::cr1::CMS_A::EdgeAligned);
+            w.dir().clear_bit();
+            w.opm().clear_bit();
+            w.arpe().set_bit();
+            w.urs().clear_bit();
+            w.cen().set_bit()
+        });
+        timer.ccer.modify(|_, w| w.cc1e().set_bit());
+        timer.dier.modify(|_, w| w.cc1de().enabled());
+
+        let ccr1_tim3 = timer::CCR::<TIM3, 0>(unsafe { mem::transmute_copy(&timer) });
         let dma_config = get_dshot_dma_cfg();
-        let dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &mut [u16; 18]> = dma::Transfer::init_memory_to_peripheral(
+        let dma_transfer = dma::Transfer::init_memory_to_peripheral(
             dma1_streams.4,
             ccr1_tim3,
             cortex_m::singleton!(: [u16; DMA_BUFFER_LEN] = [0; DMA_BUFFER_LEN]).unwrap(),
             None,
             dma_config,
         );
-        let buffer = Some(cortex_m::singleton!(: [u16; DMA_BUFFER_LEN] = [0; DMA_BUFFER_LEN]).unwrap());
-        let throttle = 0;
+        let idle_buffer = cortex_m::singleton!(: [u16; DMA_BUFFER_LEN] = [0; DMA_BUFFER_LEN]);
 
+        let _pin = output_pin.into();
 
+        unsafe {
+            cortex_m::peripheral::NVIC::unmask(Interrupt::DMA1_STREAM4);
+        }
 
         Dshot {
             dma_transfer,
-            throttle,
-            buffer,
-            timer: tim
+            idle_buffer,
+            timer,
         }
-    }   
-    pub fn check_timer_count(&mut self) -> u32 {
-        self.timer.cnt.read().bits()
     }
-    pub fn check_timer_compare(&mut self) -> u32 {
-        self.timer.ccr1().read().bits()
-    }
-    pub fn set_throttle(&mut self, throttle: u16) {
-        self.throttle = throttle;
-    }
-    pub fn transmit_frame(&mut self) {
-        let buffer = self.buffer.take().unwrap();
-        let mut packet = encode_dshot_packet(self.throttle, false);
-        for n in 0..DSHOT_BUFFER_LEN {
-            buffer[n] = match packet & 0x8000 {
+
+    pub fn send_throttle(&mut self, value: u16) {
+        let mut packet = encode_dshot_packet(value, false);
+        let buffer = self.idle_buffer.take().unwrap();
+        for slot in buffer.iter_mut() {
+            *slot = match packet & 0x8000 {
                 0 => DSHOT_BIT_0,
                 _ => DSHOT_BIT_1,
             };
-
             packet <<= 1;
         }
-        let buffer = self.dma_transfer.next_transfer(buffer).unwrap();
-        self.buffer = Some(buffer.0);
+        let ret = self.dma_transfer.next_transfer(buffer);
+        match ret {
+            // Some error occured, maybe buffer was still in flight. We'll just ignore it though,
+            // as the client will ask us to send again later. We do need to save our buffer again
+            // however.
+            Err(DMAError::NotReady(buf)) => self.idle_buffer = Some(buf),
+            Err(DMAError::Overrun(buf)) => self.idle_buffer = Some(buf),
+            Err(DMAError::SmallBuffer(buf)) => self.idle_buffer = Some(buf),
+            // Replaced in-flight buffer, save the one that we got back
+            Ok((buffer, _)) => self.idle_buffer = Some(buffer),
+        }
     }
-    fn start(&mut self) {
 
+    pub fn on_interrupt(&mut self) -> bool {
+        let flags = self.dma_transfer.flags();
+        self.dma_transfer.clear_all_flags();
+        flags.is_transfer_complete() || flags.is_transfer_error()
     }
 }
 fn get_dshot_dma_cfg() -> dma::config::DmaConfig {
