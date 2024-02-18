@@ -1,14 +1,24 @@
-use crate::clock::Clock;
+use crate::{clock::Clock, pid::PidGains};
 use anchor::*;
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
 pub struct CommandState {
-    config_crc: Option<u32>,
+    pub config_crc: Option<u32>,
 }
 
 impl CommandState {
     pub fn init() -> Self {
         Self { config_crc: None }
     }
+}
+
+pub struct CommandInterfaces<'ctx> {
+    pub pid_gains: &'ctx Signal<CriticalSectionRawMutex, PidGains>,
+}
+
+pub struct CommandContext<'ctx> {
+    pub state: &'ctx mut CommandState,
+    pub interfaces: CommandInterfaces<'ctx>,
 }
 
 #[klipper_command]
@@ -34,8 +44,8 @@ pub fn get_clock() {
 pub fn emergency_stop() {}
 
 #[klipper_command]
-pub fn get_config(context: &CommandState) {
-    let crc = context.config_crc;
+pub fn get_config(context: &CommandContext) {
+    let crc = context.state.config_crc;
     klipper_reply!(
         config,
         is_config: bool = crc.is_some(),
@@ -46,13 +56,13 @@ pub fn get_config(context: &CommandState) {
 }
 
 #[klipper_command]
-pub fn config_reset(context: &mut CommandState) {
-    context.config_crc = None;
+pub fn config_reset(context: &mut CommandContext) {
+    context.state.config_crc = None;
 }
 
 #[klipper_command]
-pub fn finalize_config(context: &mut CommandState, crc: u32) {
-    context.config_crc = Some(crc);
+pub fn finalize_config(context: &mut CommandContext, crc: u32) {
+    context.state.config_crc = Some(crc);
 }
 
 #[klipper_command]

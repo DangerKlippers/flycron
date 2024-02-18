@@ -1,4 +1,4 @@
-use crate::hal;
+use crate::{commands::CommandContext, hal};
 use anchor::*;
 use core::mem::MaybeUninit;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
@@ -72,12 +72,12 @@ impl UsbDevice {
         }
     }
 
-    pub fn handle_commands(&mut self, state: &mut crate::commands::CommandState) {
+    pub fn handle_commands(&mut self, context: CommandContext) {
         if self.rx_buffer.is_empty() {
             return;
         }
         let mut wrap = SliceInputBuffer::new(self.rx_buffer.data());
-        crate::KLIPPER_TRANSPORT.receive(&mut wrap, state);
+        crate::KLIPPER_TRANSPORT.receive(&mut wrap, context);
         self.rx_buffer.pop(self.rx_buffer.len() - wrap.available());
     }
 

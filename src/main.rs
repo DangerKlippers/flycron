@@ -21,10 +21,11 @@ use stm32f4xx_hal as hal;
 mod app {
     use crate::{
         clock::Clock,
+        commands::{CommandContext, CommandInterfaces},
         create_stm32_tim2_monotonic_token,
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
         hal::{prelude::*, qei::Qei},
-        pid::next_pid_time,
+        pid::{next_pid_time, PidGains},
         usb::*,
     };
     use bbqueue::BBBuffer;
@@ -40,6 +41,8 @@ mod app {
         dshot_throttle: Signal<CriticalSectionRawMutex, ThrottleCommand>,
         dshot: Dshot,
         dshot_complete: Signal<CriticalSectionRawMutex, ()>,
+
+        pid_gains: Signal<CriticalSectionRawMutex, PidGains>,
     }
 
     #[local]
@@ -124,6 +127,8 @@ mod app {
                 dshot_throttle: Signal::new(),
                 dshot,
                 dshot_complete: Signal::new(),
+
+                pid_gains: Signal::new(),
             },
             Local {},
         )
@@ -144,13 +149,18 @@ mod app {
         }
     }
 
-    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state])]
+    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains])]
     fn irq_usb(mut cx: irq_usb::Context) {
         cx.shared.usb_dev.lock(|usb_dev| {
             if usb_dev.on_interrupt() {
-                cx.shared
-                    .command_state
-                    .lock(|cs| usb_dev.handle_commands(cs));
+                cx.shared.command_state.lock(|cs| {
+                    usb_dev.handle_commands(CommandContext {
+                        state: cs,
+                        interfaces: CommandInterfaces {
+                            pid_gains: cx.shared.pid_gains,
+                        },
+                    })
+                });
                 usb_dev.pump_write();
             }
         });
@@ -184,13 +194,22 @@ mod app {
         }
     }
 
-    #[task(priority = 7, shared = [&encoder, &dshot_throttle])]
+    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains])]
     async fn pid_loop(cx: pid_loop::Context) {
         let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
-        controller.p(10.0, f32::MAX);
+        controller.p(1.0, f32::MAX);
         loop {
             let next_time = next_pid_time();
             Clock::delay_until(next_time).await;
+
+            if cx.shared.pid_gains.signaled() {
+                // NOTE: Will return immediately because we checked for signal
+                let gains = cx.shared.pid_gains.wait().await;
+                controller
+                    .p(gains.p, gains.p_max)
+                    .i(gains.i, gains.i_max)
+                    .d(gains.d, gains.d_max);
+            }
 
             // TODO: Add filtering or something?
             let current_position = cx.shared.encoder.count() as f32;
@@ -210,5 +229,5 @@ mod app {
 use anchor::klipper_config_generate;
 klipper_config_generate!(
   transport = crate::usb::TRANSPORT_OUTPUT: crate::usb::BufferTransportOutput,
-  context = &'ctx mut crate::commands::CommandState,
+  context = crate::commands::CommandContext<'ctx>,
 );
