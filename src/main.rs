@@ -192,7 +192,9 @@ mod app {
             let next_time = next_pid_time();
             Clock::delay_until(next_time).await;
 
+            // TODO: Add filtering or something?
             let current_position = cx.shared.encoder.count() as f32;
+            // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = 600.0;
 
             controller.setpoint(target_position);
