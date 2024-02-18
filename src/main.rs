@@ -7,6 +7,7 @@ mod clock;
 mod commands;
 mod detail;
 mod stepper_emulation;
+mod movequeue;
 mod trsync;
 mod usb;
 
@@ -83,9 +84,9 @@ mod app {
         Clock::start(cx.device.TIM2, token);
 
         let command_state = crate::commands::CommandState::init();
-        
+
         let encoder = Qei::new(cx.device.TIM5, (gpioa.pa0.into_pull_up_input(), gpioa.pa1.into_pull_up_input()));
-        
+
         encoder_read::spawn().ok();
         (
             Shared {

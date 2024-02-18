@@ -1,13 +1,19 @@
 use crate::clock::Clock;
+use crate::stepper_emulation::Stepper;
 use anchor::*;
+
 
 pub struct CommandState {
     config_crc: Option<u32>,
+    pub stepper: Option<Stepper>,
 }
 
 impl CommandState {
     pub fn init() -> Self {
-        Self { config_crc: None }
+        Self {
+            config_crc: None,
+            stepper: None,
+        }
     }
 }
 
@@ -35,7 +41,7 @@ pub fn emergency_stop() {}
 
 #[klipper_command]
 pub fn get_config(context: &CommandState) {
-    let crc = context.config_crc;
+    let crc: Option<u32> = context.config_crc;
     klipper_reply!(
         config,
         is_config: bool = crc.is_some(),
