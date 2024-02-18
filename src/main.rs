@@ -108,7 +108,7 @@ mod app {
 
         let dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
         
-        dshot_loop::spawn().ok();
+        // dshot_loop::spawn().ok();
         (
             Shared {
                 usb_dev,
@@ -150,12 +150,14 @@ mod app {
     async fn dshot_loop(mut cx: dshot_loop::Context) {
         loop {
             Clock::delay(Duration::millis(1000)).await;
-            cx.shared.dshot.lock(|dshot| dshot.set_throttle(0));
-            cx.shared.dshot.lock(|dshot| dshot.transmit_frame());
+            // cx.shared.dshot.lock(|dshot| dshot.set_throttle(0));
+            // cx.shared.dshot.lock(|dshot| dshot.transmit_frame());
            
             
             let count = cx.shared.dshot.lock(|dshot| dshot.check_timer_count());
+            let compare = cx.shared.dshot.lock(|dshot| dshot.check_timer_compare());
             defmt::info!("Count: {}", count);
+            defmt::info!("Compare: {}", compare);
         }
     }
 

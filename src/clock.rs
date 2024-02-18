@@ -3,7 +3,6 @@ use crate::hal::{
     rcc::{Enable, Reset},
 };
 use anchor::klipper_constant;
-use stm32f4xx_hal::pac::TIM3;
 use core::future::Future;
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::NVIC;

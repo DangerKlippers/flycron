@@ -1,6 +1,7 @@
 
 
 use core::mem;
+use stm32f4xx_hal::bb;
 use stm32f4xx_hal::gpio::gpiob::PB4;
 use stm32f4xx_hal::gpio::Alternate;
 use stm32f4xx_hal::gpio::Pin;
@@ -54,9 +55,11 @@ impl Dshot {
         //     .modify(|_, w| w.oc3pe().set_bit().oc3m().pwm_mode1());
         // tim.ccmr2_output()
         //     .modify(|_, w| w.oc4pe().set_bit().oc4m().pwm_mode1());
+
+        
         tim.cr1.modify(|_, w| w.arpe().set_bit());
 
-        let freq = DSHOT_150_MHZ;
+        let freq = DSHOT_600_MHZ;
         defmt::info!("clk: {}", clk);
         defmt::info!("freq: {}", freq);
         tim.psc
@@ -78,9 +81,18 @@ impl Dshot {
                 .cen()
                 .set_bit()
         });
+        unsafe {
+            bb::set(&(*TIM3::ptr()).ccer, 0);
+        }
         tim.ccer.modify(|_, w| w.cc1e().set_bit());
-        // tim.ccer.modify(|_, w| w.cc1e().clear_bit());
-
+        tim.ccer.modify(|_, w| w.cc2e().set_bit());
+        tim.ccer.modify(|_, w| w.cc3e().set_bit());
+        tim.ccer.modify(|_, w| w.cc4e().set_bit());
+        unsafe {
+            (*tim).cnt.modify(|_, w| w.bits(0));
+            (*tim).dier.modify(|_, w| w.cc1de().enabled());
+        }
+        tim.ccr1().modify(|_, w| w.ccr().variant(10));
 
         let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(unsafe { mem::transmute_copy(&tim) });
         let dma_config = get_dshot_dma_cfg();
@@ -94,11 +106,8 @@ impl Dshot {
         let buffer = Some(cortex_m::singleton!(: [u16; DMA_BUFFER_LEN] = [0; DMA_BUFFER_LEN]).unwrap());
         let throttle = 0;
 
-        unsafe {
-            let tim3 = pac::TIM3::ptr();
-            (*tim3).cnt.modify(|_, w| w.bits(0));
-            (*tim3).dier.modify(|_, w| w.cc1de().enabled());
-        }
+
+
         Dshot {
             dma_transfer,
             throttle,
@@ -108,6 +117,9 @@ impl Dshot {
     }   
     pub fn check_timer_count(&mut self) -> u32 {
         self.timer.cnt.read().bits()
+    }
+    pub fn check_timer_compare(&mut self) -> u32 {
+        self.timer.ccr1().read().bits()
     }
     pub fn set_throttle(&mut self, throttle: u16) {
         self.throttle = throttle;
