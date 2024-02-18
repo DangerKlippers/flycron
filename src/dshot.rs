@@ -1,6 +1,9 @@
 
 
 use core::mem;
+use stm32f4xx_hal::gpio::gpiob::PB4;
+use stm32f4xx_hal::gpio::Alternate;
+use stm32f4xx_hal::gpio::Pin;
 use stm32f4xx_hal::pac::TIM3;
 use fugit::RateExtU32;
 use stm32f4xx_hal::dma;
@@ -34,7 +37,6 @@ pub struct Dshot{
 
 impl Dshot {
     pub fn new(dma1: DMA1, tim: TIM3, clk: u32) -> Dshot{
-
         unsafe {
             let rcc = &(*RCC::ptr());
             TIM3::enable(rcc);
@@ -91,6 +93,12 @@ impl Dshot {
         );
         let buffer = Some(cortex_m::singleton!(: [u16; DMA_BUFFER_LEN] = [0; DMA_BUFFER_LEN]).unwrap());
         let throttle = 0;
+
+        unsafe {
+            let tim3 = pac::TIM3::ptr();
+            (*tim3).cnt.modify(|_, w| w.bits(0));
+            (*tim3).dier.modify(|_, w| w.cc1de().enabled());
+        }
         Dshot {
             dma_transfer,
             throttle,

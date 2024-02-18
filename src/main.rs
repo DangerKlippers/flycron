@@ -68,6 +68,7 @@ mod app {
             .freeze();
 
         let gpioa = cx.device.GPIOA.split();
+        let gpiob = cx.device.GPIOB.split();
 
         // USB setup
         let usb_allocator = cx.local.usb_allocator.write(UsbBus::new(
@@ -103,6 +104,8 @@ mod app {
             bb::clear(&rcc.apb1rstr, bit);
         }
         let clk = clocks.timclk1().to_MHz();
+        gpiob.pb4.into_alternate::<2>().into_push_pull_output();
+
         let dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
         
         dshot_loop::spawn().ok();
