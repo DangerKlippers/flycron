@@ -7,6 +7,7 @@ mod clock;
 mod commands;
 mod detail;
 mod dshot;
+mod pid;
 mod stepper_emulation;
 mod trsync;
 mod usb;
@@ -19,10 +20,11 @@ use stm32f4xx_hal as hal;
 )]
 mod app {
     use crate::{
-        clock::{Clock, Duration},
+        clock::Clock,
         create_stm32_tim2_monotonic_token,
-        dshot::{DShotSpeed, Dshot},
+        dshot::{DShotSpeed, Dshot, ThrottleCommand},
         hal::{prelude::*, qei::Qei},
+        pid::next_pid_time,
         usb::*,
     };
     use bbqueue::BBBuffer;
@@ -34,6 +36,8 @@ mod app {
         usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
         encoder: Qei<stm32f4xx_hal::pac::TIM5>,
+
+        dshot_throttle: Signal<CriticalSectionRawMutex, ThrottleCommand>,
         dshot: Dshot,
         dshot_complete: Signal<CriticalSectionRawMutex, ()>,
     }
@@ -99,9 +103,6 @@ mod app {
             ),
         );
 
-        // encoder_read::spawn().ok();
-
-        //(tim3, apb1enr, apb1rstr, 1u8, pclk1, ppre1),
         let out = gpiob.pb4.into_push_pull_output();
         let dshot = crate::dshot::Dshot::new(
             cx.device.DMA1,
@@ -112,11 +113,15 @@ mod app {
         );
 
         dshot_loop::spawn().ok();
+        pid_loop::spawn().ok();
+
         (
             Shared {
                 usb_dev,
                 command_state,
                 encoder,
+
+                dshot_throttle: Signal::new(),
                 dshot,
                 dshot_complete: Signal::new(),
             },
@@ -151,32 +156,24 @@ mod app {
         });
     }
 
-    #[task(priority = 8, shared = [dshot, &dshot_complete])]
+    #[task(priority = 8, shared = [dshot, &dshot_complete, &dshot_throttle])]
     async fn dshot_loop(mut cx: dshot_loop::Context) {
         let mut cnt = 0;
         let mut last_report = Clock::now();
         loop {
+            let throttle = cx.shared.dshot_throttle.wait().await;
             cx.shared
                 .dshot
-                .lock(|dshot| dshot.send_throttle(48 + cnt % 2000));
+                .lock(|dshot| dshot.send_throttle(throttle.into()));
             cx.shared.dshot_complete.wait().await;
             cnt += 1;
 
             let now = Clock::now();
-            if now > last_report + crate::clock::Duration::millis(1000) {
+            if now >= last_report + crate::clock::Duration::millis(1000) {
                 last_report = now;
-                defmt::info!("COUNT {}", cnt);
+                defmt::info!("COUNT {}, LAST VAL {}", cnt, throttle);
                 cnt = 0;
             }
-        }
-    }
-
-    #[task(priority = 1, shared = [&encoder])]
-    async fn encoder_read(cx: encoder_read::Context) {
-        loop {
-            Clock::delay(Duration::millis(10)).await;
-            let count = cx.shared.encoder.count();
-            defmt::info!("Count: {}", count);
         }
     }
 
@@ -184,6 +181,26 @@ mod app {
     fn dshot_dma_finish(mut cx: dshot_dma_finish::Context) {
         if cx.shared.dshot.lock(|dshot| dshot.on_interrupt()) {
             cx.shared.dshot_complete.signal(());
+        }
+    }
+
+    #[task(priority = 7, shared = [&encoder, &dshot_throttle])]
+    async fn pid_loop(cx: pid_loop::Context) {
+        let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
+        controller.p(10.0, f32::MAX);
+        loop {
+            let next_time = next_pid_time();
+            Clock::delay_until(next_time).await;
+
+            let current_position = cx.shared.encoder.count() as f32;
+            let target_position = 600.0;
+
+            controller.setpoint(target_position);
+            let throttle = controller.next_control_output(current_position).output;
+
+            cx.shared.dshot_throttle.signal(ThrottleCommand::Throttle(
+                (throttle.clamp(0.0, 1.0) * (ThrottleCommand::MAX as f32)) as u16,
+            ));
         }
     }
 }

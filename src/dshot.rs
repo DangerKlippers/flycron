@@ -13,6 +13,25 @@ use stm32f4xx_hal::{
 use crate::hal::rcc::{Enable, Reset};
 
 #[derive(defmt::Format, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ThrottleCommand {
+    Disarmed,
+    Throttle(u16),
+}
+
+impl ThrottleCommand {
+    pub const MAX: u16 = 2047;
+}
+
+impl From<ThrottleCommand> for u16 {
+    fn from(value: ThrottleCommand) -> Self {
+        match value {
+            ThrottleCommand::Disarmed => 0,
+            ThrottleCommand::Throttle(v) => 48 + v.clamp(0, Self::MAX),
+        }
+    }
+}
+
+#[derive(defmt::Format, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum DShotSpeed {
     Speed150kHz,
     Speed300kHz,
