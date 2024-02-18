@@ -1,17 +1,19 @@
 
 
 use core::mem;
-
+use stm32f4xx_hal::pac::TIM3;
 use fugit::RateExtU32;
 use stm32f4xx_hal::dma;
 use stm32f4xx_hal::pac;
 use stm32f4xx_hal::pac::DMA1;
 use stm32f4xx_hal::pac::RCC;
-use stm32f4xx_hal::pac::TIM3;
 use stm32f4xx_hal::rcc::Rcc;
 use stm32f4xx_hal::rcc::RccExt;
 use stm32f4xx_hal::timer;
 use stm32f4xx_hal::rcc as hal_rcc;
+
+use crate::hal::rcc::{Enable, Reset};
+
 pub const DSHOT_150_MHZ: u32 = 3;
 pub const DSHOT_300_MHZ: u32 = 6;
 pub const DSHOT_600_MHZ: u32 = 12;
@@ -27,10 +29,18 @@ pub struct Dshot{
     dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &'static mut [u16; 18]>,
     throttle: u16,
     buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
+    timer: TIM3
 }
 
 impl Dshot {
     pub fn new(dma1: DMA1, tim: TIM3, clk: u32) -> Dshot{
+
+        unsafe {
+            let rcc = &(*RCC::ptr());
+            TIM3::enable(rcc);
+            TIM3::reset(rcc);
+        }
+
         let dma1_streams = dma::StreamsTuple::new(dma1);
         
         
@@ -84,10 +94,13 @@ impl Dshot {
         Dshot {
             dma_transfer,
             throttle,
-            buffer
+            buffer,
+            timer: tim
         }
     }   
-
+    pub fn check_timer_count(&mut self) -> u32 {
+        self.timer.cnt.read().bits()
+    }
     pub fn set_throttle(&mut self, throttle: u16) {
         self.throttle = throttle;
     }

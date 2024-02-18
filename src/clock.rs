@@ -3,6 +3,7 @@ use crate::hal::{
     rcc::{Enable, Reset},
 };
 use anchor::klipper_constant;
+use stm32f4xx_hal::pac::TIM3;
 use core::future::Future;
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::peripheral::NVIC;
@@ -22,6 +23,7 @@ impl Clock {
             TIM2::enable(rcc);
             TIM2::reset(rcc);
         }
+
 
         tim2.cr1.modify(|_, w| w.cen().set_bit());
         tim2.psc.write(|w| w.psc().variant(0));

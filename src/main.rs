@@ -27,6 +27,7 @@ mod app {
     use stm32f4xx_hal::bb;
     use stm32f4xx_hal::dma::StreamsTuple;
     use stm32f4xx_hal::pac;
+    use stm32f4xx_hal::pac::TIM3;
 
 
     #[shared]
@@ -102,18 +103,15 @@ mod app {
             bb::clear(&rcc.apb1rstr, bit);
         }
         let clk = clocks.timclk1().to_MHz();
-        let mut dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
-        loop {
-            Clock::delay(Duration::millis(1000));
-            dshot.set_throttle(1);
-            dshot.transmit_frame();
-        }
+        let dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
+        
+        dshot_loop::spawn().ok();
         (
             Shared {
                 usb_dev,
                 command_state,
                 encoder,
-                dshot
+                dshot: dshot
             },
             Local {},
         )
@@ -145,22 +143,27 @@ mod app {
             }
         });
     }
-    // #[task(priority = 1, shared = [&encoder, &dshot])]
-    // async fn encoder_read(cx: encoder_read::Context) {
-    //     let dshot: &Dshot = cx.shared.dshot;
-    //     loop {
-    //     }
+    #[task(priority = 1, shared = [dshot])]
+    async fn dshot_loop(mut cx: dshot_loop::Context) {
+        loop {
+            Clock::delay(Duration::millis(1000)).await;
+            cx.shared.dshot.lock(|dshot| dshot.set_throttle(0));
+            cx.shared.dshot.lock(|dshot| dshot.transmit_frame());
+           
+            
+            let count = cx.shared.dshot.lock(|dshot| dshot.check_timer_count());
+            defmt::info!("Count: {}", count);
+        }
+    }
 
-    // }
-    // #[task(priority = 1, shared = [&encoder])]
-    // async fn encoder_read(cx: encoder_read::Context) {
-    //     loop {
-    //         Clock::delay(Duration::millis(10)).await;
-    //         let count = cx.shared.encoder.count();
-    //         defmt::info!("Count: {}", count);
-    //     }
-
-    // }
+    #[task(priority = 1, shared = [&encoder])]
+    async fn encoder_read(cx: encoder_read::Context) {
+        loop {
+            Clock::delay(Duration::millis(10)).await;
+            let count = cx.shared.encoder.count();
+            defmt::info!("Count: {}", count);
+        }
+    }
 }
 
 use anchor::klipper_config_generate;
