@@ -20,14 +20,15 @@ struct Dshot{
     dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &'static mut [u16; 18]>,
     throttle: u16,
     buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
+    tim: pac::TIM3,
 }
 
 impl Dshot {
     fn new(device: pac::Peripherals) -> Dshot{
         let dma1 = device.DMA1;
         let dma1_streams = dma::StreamsTuple::new(dma1);
-        let tim3 = device.TIM3;
-        let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(tim3);
+        let tim = device.TIM3;
+        let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(tim);
         let dma_config = get_dshot_dma_cfg();
         let dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &mut [u16; 18]> = dma::Transfer::init_memory_to_peripheral(
             dma1_streams.4,
@@ -42,6 +43,7 @@ impl Dshot {
             dma_transfer,
             throttle,
             buffer,
+            tim
         }
     }   
     fn set_throttle(&mut self, throttle: u16) {
