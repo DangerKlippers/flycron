@@ -1,10 +1,17 @@
 
 
+use core::mem;
+
+use fugit::RateExtU32;
 use stm32f4xx_hal::dma;
 use stm32f4xx_hal::pac;
+use stm32f4xx_hal::pac::DMA1;
+use stm32f4xx_hal::pac::RCC;
+use stm32f4xx_hal::pac::TIM3;
+use stm32f4xx_hal::rcc::Rcc;
+use stm32f4xx_hal::rcc::RccExt;
 use stm32f4xx_hal::timer;
-use stm32f4xx_hal::bb;
-
+use stm32f4xx_hal::rcc as hal_rcc;
 pub const DSHOT_150_MHZ: u32 = 3;
 pub const DSHOT_300_MHZ: u32 = 6;
 pub const DSHOT_600_MHZ: u32 = 12;
@@ -16,19 +23,54 @@ const DSHOT_BIT_LEN: u32 = 20;
 const DSHOT_BIT_0: u16 = 8;
 const DSHOT_BIT_1: u16 = 16;
 
-struct Dshot{
+pub struct Dshot{
     dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &'static mut [u16; 18]>,
     throttle: u16,
     buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
-    tim: pac::TIM3,
 }
 
 impl Dshot {
-    fn new(device: pac::Peripherals) -> Dshot{
-        let dma1 = device.DMA1;
+    pub fn new(dma1: DMA1, tim: TIM3, clk: u32) -> Dshot{
         let dma1_streams = dma::StreamsTuple::new(dma1);
-        let tim = device.TIM3;
-        let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(tim);
+        
+        
+        tim.ccmr1_output()
+            .modify(|_, w| w.oc1pe().set_bit().oc1m().pwm_mode1());
+        tim.ccmr1_output()
+            .modify(|_, w| w.oc2pe().set_bit().oc2m().pwm_mode1());
+        // tim.ccmr2_output()
+        //     .modify(|_, w| w.oc3pe().set_bit().oc3m().pwm_mode1());
+        // tim.ccmr2_output()
+        //     .modify(|_, w| w.oc4pe().set_bit().oc4m().pwm_mode1());
+        tim.cr1.modify(|_, w| w.arpe().set_bit());
+
+        let freq = DSHOT_150_MHZ;
+        defmt::info!("clk: {}", clk);
+        defmt::info!("freq: {}", freq);
+        tim.psc
+            .write(|w| w.psc().bits((clk / freq - 1) as u16));
+        tim.arr.write(|w| unsafe { w.bits(DSHOT_BIT_LEN) });
+
+        tim.cr1.modify(|_, w| w.urs().set_bit());
+        tim.egr.write(|w| w.ug().set_bit());
+        tim.cr1.modify(|_, w| w.urs().clear_bit());
+
+
+        tim.cr1.write(|w| {
+            w.cms()
+                .bits(0b00)
+                .dir()
+                .clear_bit()
+                .opm()
+                .clear_bit()
+                .cen()
+                .set_bit()
+        });
+        tim.ccer.modify(|_, w| w.cc1e().set_bit());
+        // tim.ccer.modify(|_, w| w.cc1e().clear_bit());
+
+
+        let ccr1_tim3 = timer::CCR::<pac::TIM3, 0>(unsafe { mem::transmute_copy(&tim) });
         let dma_config = get_dshot_dma_cfg();
         let dma_transfer: dma::Transfer<dma::StreamX<pac::DMA1, 4>, 5, timer::CCR<pac::TIM3, 0>, dma::MemoryToPeripheral, &mut [u16; 18]> = dma::Transfer::init_memory_to_peripheral(
             dma1_streams.4,
@@ -42,14 +84,14 @@ impl Dshot {
         Dshot {
             dma_transfer,
             throttle,
-            buffer,
-            tim
+            buffer
         }
     }   
-    fn set_throttle(&mut self, throttle: u16) {
+
+    pub fn set_throttle(&mut self, throttle: u16) {
         self.throttle = throttle;
     }
-    fn transmit_frame(&mut self) {
+    pub fn transmit_frame(&mut self) {
         let buffer = self.buffer.take().unwrap();
         let mut packet = encode_dshot_packet(self.throttle, false);
         for n in 0..DSHOT_BUFFER_LEN {
@@ -64,19 +106,7 @@ impl Dshot {
         self.buffer = Some(buffer.0);
     }
     fn start(&mut self) {
-        //(tim3, apb1enr, apb1rstr, 1u8, pclk1, ppre1),
-        let bit = 1u8;
-        unsafe {
-            let rcc = &(*pac::RCC::ptr());
-            bb::set(&rcc.apb1rstr, bit);
-            bb::set(&rcc.apb1rstr, bit);
-            bb::clear(&rcc.apb1rstr, bit);
-        }
-        self.tim.ccmr1_output()
-            .modify(|_, w| w.oc1pe().set_bit().oc1m().pwm_mode1());
-        self.tim.ccmr1_output()
-            .modify(|_, w| w.oc2pe().set_bit().oc2m().pwm_mode1());
-        self.tim.cr1.modify(|_, w| w.arpe().set_bit());
+
     }
 }
 fn get_dshot_dma_cfg() -> dma::config::DmaConfig {

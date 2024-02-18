@@ -19,17 +19,22 @@ use stm32f4xx_hal as hal;
 )]
 mod app {
     use core::mem::MaybeUninit;
-
+    use crate::dshot::Dshot;
     use crate::{clock::Clock, clock::Duration, create_stm32_tim2_monotonic_token, hal::prelude::*, usb::*};
     use bbqueue::BBBuffer;
 
     use stm32f4xx_hal::qei::Qei;
+    use stm32f4xx_hal::bb;
+    use stm32f4xx_hal::dma::StreamsTuple;
+    use stm32f4xx_hal::pac;
+
 
     #[shared]
     struct Shared {
         usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
         encoder: Qei<stm32f4xx_hal::pac::TIM5>,
+        dshot: Dshot
     }
 
     #[local]
@@ -42,7 +47,6 @@ mod app {
     ])]
     fn init(cx: init::Context) -> (Shared, Local) {
         defmt::info!("init");
-
         // Following needed to let RTT attach during sleep
         cx.device.DBGMCU.cr.modify(|_, w| {
             w.dbg_sleep().set_bit();
@@ -87,12 +91,29 @@ mod app {
         
         let encoder = Qei::new(cx.device.TIM5, (gpioa.pa0.into_pull_up_input(), gpioa.pa1.into_pull_up_input()));
         
-        encoder_read::spawn().ok();
+        // encoder_read::spawn().ok();
+        
+        //(tim3, apb1enr, apb1rstr, 1u8, pclk1, ppre1),
+        let bit = 1u8;
+        unsafe {
+            let rcc = &(*pac::RCC::ptr());
+            bb::set(&rcc.apb1rstr, bit);
+            bb::set(&rcc.apb1rstr, bit);
+            bb::clear(&rcc.apb1rstr, bit);
+        }
+        let clk = clocks.timclk1().to_MHz();
+        let mut dshot = crate::dshot::Dshot::new(cx.device.DMA1, cx.device.TIM3, clk);
+        loop {
+            Clock::delay(Duration::millis(1000));
+            dshot.set_throttle(1);
+            dshot.transmit_frame();
+        }
         (
             Shared {
                 usb_dev,
                 command_state,
                 encoder,
+                dshot
             },
             Local {},
         )
@@ -124,15 +145,22 @@ mod app {
             }
         });
     }
-    #[task(priority = 1, shared = [&encoder])]
-    async fn encoder_read(cx: encoder_read::Context) {
-        loop {
-            Clock::delay(Duration::millis(10)).await;
-            let count = cx.shared.encoder.count();
-            defmt::info!("Count: {}", count);
-        }
+    // #[task(priority = 1, shared = [&encoder, &dshot])]
+    // async fn encoder_read(cx: encoder_read::Context) {
+    //     let dshot: &Dshot = cx.shared.dshot;
+    //     loop {
+    //     }
 
-    }
+    // }
+    // #[task(priority = 1, shared = [&encoder])]
+    // async fn encoder_read(cx: encoder_read::Context) {
+    //     loop {
+    //         Clock::delay(Duration::millis(10)).await;
+    //         let count = cx.shared.encoder.count();
+    //         defmt::info!("Count: {}", count);
+    //     }
+
+    // }
 }
 
 use anchor::klipper_config_generate;
