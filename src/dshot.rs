@@ -114,13 +114,15 @@ impl Dshot {
     pub fn send_throttle(&mut self, value: u16) {
         let mut packet = encode_dshot_packet(value, false);
         let buffer = self.idle_buffer.take().unwrap();
-        for slot in buffer.iter_mut() {
+        for slot in buffer.iter_mut().take(DSHOT_BUFFER_LEN) {
             *slot = match packet & 0x8000 {
                 0 => DSHOT_BIT_0,
                 _ => DSHOT_BIT_1,
             };
             packet <<= 1;
         }
+        buffer[DSHOT_BUFFER_LEN] = 0;
+        buffer[DSHOT_BUFFER_LEN + 1] = 0;
         let ret = self.dma_transfer.next_transfer(buffer);
         match ret {
             // Some error occured, maybe buffer was still in flight. We'll just ignore it though,

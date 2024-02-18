@@ -108,7 +108,7 @@ mod app {
             cx.device.TIM3,
             out,
             clocks.timclk1(),
-            DShotSpeed::Speed300kHz,
+            DShotSpeed::Speed1200kHz,
         );
 
         dshot_loop::spawn().ok();
