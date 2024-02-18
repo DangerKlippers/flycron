@@ -9,6 +9,7 @@ mod detail;
 mod stepper_emulation;
 mod trsync;
 mod usb;
+mod dshot;
 
 use stm32f4xx_hal as hal;
 
