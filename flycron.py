@@ -24,11 +24,18 @@ class Flycron:
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
         gcode = self.printer.lookup_object("gcode")
         gcode.register_mux_command(
-            "FLYCRON_SET_SETPOINT",
+            "FLYCRON_SETPID",
             "MCU",
             self.name,
-            self.cmd_FLYCRON_SET_SETPOINT,
-            desc=self.cmd_FLYCRON_SET_SETPOINT_help,
+            self.cmd_FLYCRON_SETPID,
+            desc=self.cmd_FLYCRON_SETPID_help,
+        )
+        gcode.register_mux_command(
+            "FLYCRON_SETPOINT",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_SETPOINT,
+            desc=self.cmd_FLYCRON_SETPOINT_help,
         )
 
     def _mcu_identify(self):
@@ -52,11 +59,24 @@ class Flycron:
             ]
         )
 
-    cmd_FLYCRON_SET_SETPOINT_help = """
+    cmd_FLYCRON_SETPID_help = """
+    Sets PID parameters for the controller
+    """
+
+    def cmd_FLYCRON_SETPID(self, gcmd):
+        self.pid_p = gcmd.get_float("P", self.pid_p)
+        self.pid_p_limit = gcmd.get_float("P_LIMIT", self.pid_p)
+        self.pid_i = gcmd.get_float("I", self.pid_i)
+        self.pid_i_limit = gcmd.get_float("I_LIMIT", self.pid_i)
+        self.pid_d = gcmd.get_float("D", self.pid_d)
+        self.pid_d_limit = gcmd.get_float("D_LIMIT", self.pid_d)
+        self._apply()
+
+    cmd_FLYCRON_SETPOINT_help = """
     Sets the setpoint of a Flycron controller
     """
 
-    def cmd_FLYCRON_SET_SETPOINT(self, gcmd):
+    def cmd_FLYCRON_SETPOINT(self, gcmd):
         target = gcmd.get_float("TARGET")
         self.pid_setpoint_cmd.send([float_to_u32(target)])
 
