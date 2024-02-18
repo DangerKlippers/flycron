@@ -20,7 +20,7 @@ use stm32f4xx_hal as hal;
 )]
 mod app {
     use crate::{
-        clock::Clock,
+        clock::{Clock, Duration},
         commands::{CommandContext, CommandInterfaces},
         create_stm32_tim2_monotonic_token,
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
@@ -171,6 +171,15 @@ mod app {
 
     #[task(priority = 8, shared = [dshot, &dshot_complete, &dshot_throttle])]
     async fn dshot_loop(mut cx: dshot_loop::Context) {
+        let deadline = Clock::now() + Duration::millis(1000);
+        defmt::info!("Arming");
+        while Clock::now() < deadline {
+            cx.shared
+                .dshot
+                .lock(|dshot| dshot.send_throttle(ThrottleCommand::Throttle(0).into()));
+            Clock::delay(Duration::millis(10)).await;
+        }
+        defmt::info!("Armed, entering throttle loop");
         let mut cnt = 0;
         let mut last_report = Clock::now();
         loop {

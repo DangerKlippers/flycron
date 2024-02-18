@@ -19,6 +19,7 @@ pub enum ThrottleCommand {
 }
 
 impl ThrottleCommand {
+    pub const MIN: u16 = 0;
     pub const MAX: u16 = 2047;
 }
 
