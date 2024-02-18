@@ -43,6 +43,7 @@ mod app {
         dshot_complete: Signal<CriticalSectionRawMutex, ()>,
 
         pid_gains: Signal<CriticalSectionRawMutex, PidGains>,
+        pid_setpoint: portable_atomic::AtomicF32,
     }
 
     #[local]
@@ -129,6 +130,7 @@ mod app {
                 dshot_complete: Signal::new(),
 
                 pid_gains: Signal::new(),
+                pid_setpoint: portable_atomic::AtomicF32::new(600.0),
             },
             Local {},
         )
@@ -149,7 +151,7 @@ mod app {
         }
     }
 
-    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains])]
+    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains, &pid_setpoint])]
     fn irq_usb(mut cx: irq_usb::Context) {
         cx.shared.usb_dev.lock(|usb_dev| {
             if usb_dev.on_interrupt() {
@@ -158,6 +160,7 @@ mod app {
                         state: cs,
                         interfaces: CommandInterfaces {
                             pid_gains: cx.shared.pid_gains,
+                            pid_setpoint: cx.shared.pid_setpoint,
                         },
                     })
                 });
@@ -194,7 +197,7 @@ mod app {
         }
     }
 
-    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains])]
+    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains, &pid_setpoint])]
     async fn pid_loop(cx: pid_loop::Context) {
         let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
         controller.p(1.0, f32::MAX);
@@ -214,7 +217,10 @@ mod app {
             // TODO: Add filtering or something?
             let current_position = cx.shared.encoder.count() as f32;
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
-            let target_position = 600.0;
+            let target_position = cx
+                .shared
+                .pid_setpoint
+                .load(portable_atomic::Ordering::Relaxed);
 
             controller.setpoint(target_position);
             let throttle = controller.next_control_output(current_position).output;

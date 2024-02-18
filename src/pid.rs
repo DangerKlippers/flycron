@@ -1,5 +1,6 @@
 use crate::commands::CommandContext;
 use anchor::*;
+use core::mem::transmute_copy;
 use fugit::HertzU64;
 
 use crate::clock::{Clock, Duration, Instant};
@@ -37,7 +38,6 @@ pub fn pid_set_gains(
     d: i32,
     d_max: u32,
 ) {
-    use core::mem::transmute_copy;
     let gains = PidGains {
         p: unsafe { transmute_copy(&p) },
         p_max: unsafe { transmute_copy(&p_max) },
@@ -47,4 +47,13 @@ pub fn pid_set_gains(
         d_max: unsafe { transmute_copy(&d_max) },
     };
     context.interfaces.pid_gains.signal(gains);
+}
+
+#[klipper_command]
+pub fn pid_set_setpoint(context: &mut CommandContext, setpoint: u32) {
+    let value: f32 = unsafe { transmute_copy(&setpoint) };
+    context
+        .interfaces
+        .pid_setpoint
+        .store(value, portable_atomic::Ordering::SeqCst);
 }
