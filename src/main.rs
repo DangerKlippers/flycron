@@ -22,8 +22,7 @@ mod app {
         clock::{Clock, Duration},
         create_stm32_tim2_monotonic_token,
         dshot::{DShotSpeed, Dshot},
-        hal::prelude::*,
-        hal::{bb, pac, qei::Qei},
+        hal::{prelude::*, qei::Qei},
         usb::*,
     };
     use bbqueue::BBBuffer;
@@ -103,22 +102,13 @@ mod app {
         // encoder_read::spawn().ok();
 
         //(tim3, apb1enr, apb1rstr, 1u8, pclk1, ppre1),
-        let bit = 1u8;
-        unsafe {
-            let rcc = &(*pac::RCC::ptr());
-            bb::set(&rcc.apb1rstr, bit);
-            bb::set(&rcc.apb1rstr, bit);
-            bb::clear(&rcc.apb1rstr, bit);
-        }
-        let clk = clocks.timclk1();
-
         let out = gpiob.pb4.into_push_pull_output();
         let dshot = crate::dshot::Dshot::new(
             cx.device.DMA1,
             cx.device.TIM3,
             out,
-            clk,
-            DShotSpeed::Speed1200kHz,
+            clocks.timclk1(),
+            DShotSpeed::Speed300kHz,
         );
 
         dshot_loop::spawn().ok();

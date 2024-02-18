@@ -1,8 +1,7 @@
 use core::mem;
 use fugit::HertzU32;
 use stm32f4xx_hal::{
-    bb,
-    dma::{self, DMAError, DmaFlag},
+    dma::{self, DMAError},
     gpio::PushPull,
     pac::Interrupt,
     pac::{tim3, DMA1, RCC, TIM3},
@@ -49,7 +48,6 @@ type DshotDmaTransfer = dma::Transfer<
 pub struct Dshot {
     dma_transfer: DshotDmaTransfer,
     idle_buffer: Option<&'static mut [u16; DMA_BUFFER_LEN]>,
-    timer: TIM3,
 }
 
 impl Dshot {
@@ -110,7 +108,6 @@ impl Dshot {
         Dshot {
             dma_transfer,
             idle_buffer,
-            timer,
         }
     }
 
