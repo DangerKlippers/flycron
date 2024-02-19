@@ -5,7 +5,7 @@ use fugit::HertzU64;
 
 use crate::clock::{Clock, Duration, Instant};
 
-pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(800));
+pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(8000));
 
 pub fn next_pid_time() -> Instant {
     let now = Clock::now();

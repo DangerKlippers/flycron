@@ -223,9 +223,17 @@ mod app {
                     .d(gains.d, gains.d_max);
             }
 
-            // TODO: Add filtering or something?
-            let current_position = cx.shared.encoder.count() as f32;
-            // defmt::info!("Current position: {}", current_position);
+            // TODO: Add scaling to stepper units or something?
+            let current_position;
+            let raw_pulse_count = cx.shared.encoder.count() as i32;
+            if raw_pulse_count > i32::MAX {
+                current_position = -(u32::MAX as i32 - raw_pulse_count) as f32;
+            }
+            else {
+                current_position = raw_pulse_count as f32;
+            }
+            // defmt::info!("Raw pulse count: {}", raw_pulse_count);
+            defmt::info!("Final Current position: {}", current_position);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = cx
                 .shared
