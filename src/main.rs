@@ -113,7 +113,7 @@ mod app {
             cx.device.TIM3,
             out,
             clocks.timclk1(),
-            DShotSpeed::Speed1200kHz,
+            DShotSpeed::Speed150kHz,
         );
 
         dshot_loop::spawn().ok();
@@ -171,13 +171,13 @@ mod app {
 
     #[task(priority = 8, shared = [dshot, &dshot_complete, &dshot_throttle])]
     async fn dshot_loop(mut cx: dshot_loop::Context) {
-        let deadline = Clock::now() + Duration::millis(1000);
+        let deadline = Clock::now() + Duration::millis(3000);
         defmt::info!("Arming");
         while Clock::now() < deadline {
             cx.shared
                 .dshot
                 .lock(|dshot| dshot.send_throttle(ThrottleCommand::Throttle(0).into()));
-            Clock::delay(Duration::millis(10)).await;
+            Clock::delay(Duration::millis(1)).await;
         }
         defmt::info!("Armed, entering throttle loop");
         let mut cnt = 0;
@@ -225,6 +225,7 @@ mod app {
 
             // TODO: Add filtering or something?
             let current_position = cx.shared.encoder.count() as f32;
+            // defmt::info!("Current position: {}", current_position);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = cx
                 .shared
