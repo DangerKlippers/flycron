@@ -25,6 +25,7 @@ fugit = { version = "0.3.7", features = ["defmt"] }
 rtic-time = "1.3.0"
 pid = "4.0.0"
 portable-atomic = { version = "1.6.0", features = ["float"] }
+micromath = "2.1.0"
 
 [build-dependencies]
 anchor_codegen = { git = "https://github.com/Annex-Engineering/anchor.git" }

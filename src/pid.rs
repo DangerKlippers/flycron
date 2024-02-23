@@ -57,3 +57,12 @@ pub fn pid_set_setpoint(context: &mut CommandContext, setpoint: u32) {
         .pid_setpoint
         .store(value, portable_atomic::Ordering::SeqCst);
 }
+#[klipper_command]
+pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
+    defmt::info!("Setting pid enable to {}", enable);
+    let value: bool = unsafe { transmute_copy(&enable) };
+    context
+        .interfaces
+        .pid_set_enable
+        .store(value, portable_atomic::Ordering::SeqCst);
+}

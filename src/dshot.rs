@@ -14,20 +14,21 @@ use crate::hal::rcc::{Enable, Reset};
 
 #[derive(defmt::Format, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum ThrottleCommand {
-    Disarmed,
+    MotorsOff,
     Throttle(u16),
 }
 
 impl ThrottleCommand {
     pub const MIN: u16 = 0;
-    pub const MAX: u16 = 800;
+    pub const MAX: u16 = 1999;
+    pub const MAX_3D: u16 = 1000;
 }
 
 impl From<ThrottleCommand> for u16 {
     fn from(value: ThrottleCommand) -> Self {
         match value {
-            ThrottleCommand::Disarmed => 0,
-            ThrottleCommand::Throttle(v) => 48 + v.clamp(0, Self::MAX),
+            ThrottleCommand::MotorsOff => 0,
+            ThrottleCommand::Throttle(v) => v + 48,
         }
     }
 }

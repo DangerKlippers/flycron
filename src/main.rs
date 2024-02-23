@@ -29,8 +29,9 @@ mod app {
         usb::*,
     };
     use bbqueue::BBBuffer;
-    use core::mem::MaybeUninit;
+    use core::mem::{discriminant, MaybeUninit};
     use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+    use micromath::F32Ext;
 
     #[shared]
     struct Shared {
@@ -44,6 +45,7 @@ mod app {
 
         pid_gains: Signal<CriticalSectionRawMutex, PidGains>,
         pid_setpoint: portable_atomic::AtomicF32,
+        pid_set_enable: portable_atomic::AtomicBool,
     }
 
     #[local]
@@ -130,7 +132,8 @@ mod app {
                 dshot_complete: Signal::new(),
 
                 pid_gains: Signal::new(),
-                pid_setpoint: portable_atomic::AtomicF32::new(600.0),
+                pid_setpoint: portable_atomic::AtomicF32::new(5000.0),
+                pid_set_enable: portable_atomic::AtomicBool::new(true),
             },
             Local {},
         )
@@ -151,7 +154,7 @@ mod app {
         }
     }
 
-    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains, &pid_setpoint])]
+    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains, &pid_setpoint, &pid_set_enable])]
     fn irq_usb(mut cx: irq_usb::Context) {
         cx.shared.usb_dev.lock(|usb_dev| {
             if usb_dev.on_interrupt() {
@@ -161,6 +164,7 @@ mod app {
                         interfaces: CommandInterfaces {
                             pid_gains: cx.shared.pid_gains,
                             pid_setpoint: cx.shared.pid_setpoint,
+                            pid_set_enable: cx.shared.pid_set_enable,
                         },
                     })
                 });
@@ -206,14 +210,22 @@ mod app {
         }
     }
 
-    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains, &pid_setpoint])]
+    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains, &pid_setpoint, &pid_set_enable])]
     async fn pid_loop(cx: pid_loop::Context) {
         let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
-        controller.p(1.0, f32::MAX);
+        controller.p(0.12, 0.12);
+        controller.i(0.12, 0.12);
         loop {
             let next_time = next_pid_time();
             Clock::delay_until(next_time).await;
-
+            if !cx
+                .shared
+                .pid_set_enable
+                .load(portable_atomic::Ordering::Relaxed)
+            {
+                cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
+                continue;
+            }
             if cx.shared.pid_gains.signaled() {
                 // NOTE: Will return immediately because we checked for signal
                 let gains = cx.shared.pid_gains.wait().await;
@@ -228,12 +240,10 @@ mod app {
             let raw_pulse_count = cx.shared.encoder.count() as i32;
             if raw_pulse_count > i32::MAX {
                 current_position = -(u32::MAX as i32 - raw_pulse_count) as f32;
-            }
-            else {
+            } else {
                 current_position = raw_pulse_count as f32;
             }
             // defmt::info!("Raw pulse count: {}", raw_pulse_count);
-            defmt::info!("Final Current position: {}", current_position);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = cx
                 .shared
@@ -242,10 +252,33 @@ mod app {
 
             controller.setpoint(target_position);
             let throttle = controller.next_control_output(current_position).output;
+            let mut actual_throttle: f32;
+            let max_thrust = 408.0;
+            let target_thrust = throttle * max_thrust;
 
-            cx.shared.dshot_throttle.signal(ThrottleCommand::Throttle(
-                (throttle.clamp(0.0, 1.0) * (ThrottleCommand::MAX as f32)) as u16,
-            ));
+            let a = 427.0;
+            let b = -22.1;
+            let c = 3.56 - target_thrust;
+            let discriminant: f32 = b * b - 4.0 * a * c;
+            if discriminant > 0.0 {
+                let sqrt_discriminant = discriminant.sqrt();
+                let x1 = (-b + sqrt_discriminant) / (2.0 * a);
+                let x2 = (-b - sqrt_discriminant) / (2.0 * a);
+                actual_throttle = x1.max(x2); // take the positive one
+            } else if discriminant == 0.0 {
+                actual_throttle = -b / (2.0 * a);
+            } else {
+                actual_throttle = 0.0;
+            }
+            if throttle < 0.0 {
+                actual_throttle = 0.0;
+            }
+
+            let scaled_throttle = actual_throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
+            // defmt::info!("Throttle: {}", scaled_throttle as u16);
+            cx.shared
+                .dshot_throttle
+                .signal(ThrottleCommand::Throttle(scaled_throttle as u16));
         }
     }
 }

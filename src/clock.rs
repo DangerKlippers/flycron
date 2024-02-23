@@ -23,7 +23,6 @@ impl Clock {
             TIM2::reset(rcc);
         }
 
-
         tim2.cr1.modify(|_, w| w.cen().set_bit());
         tim2.psc.write(|w| w.psc().variant(0));
         tim2.ccr2()

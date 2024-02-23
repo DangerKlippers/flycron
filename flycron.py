@@ -37,12 +37,20 @@ class Flycron:
             self.cmd_FLYCRON_SETPOINT,
             desc=self.cmd_FLYCRON_SETPOINT_help,
         )
+        gcode.register_mux_command(
+            "FLYCRON_SETENABLE",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_SETENABLE,
+            desc=self.cmd_FLYCRON_SETPOINT_help,
+        )
 
     def _mcu_identify(self):
         self.pid_update_cmd = self.mcu.lookup_command(
             "pid_set_gains p=%u p_max=%u i=%u i_max=%u d=%i d_max=%u"
         )
         self.pid_setpoint_cmd = self.mcu.lookup_command("pid_set_setpoint setpoint=%u")
+        self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
 
     def _handle_connect(self):
         self._apply()
@@ -80,11 +88,16 @@ class Flycron:
         target = gcmd.get_float("TARGET")
         self.pid_setpoint_cmd.send([float_to_u32(target)])
 
+    def cmd_FLYCRON_SETENABLE(self, gcmd):
+        enable_int = gcmd.get_int("ENABLE")
+        enable = enable_int > 0
+        self.pid_enable_cmd.send([enable])
+
 
 def float_to_u32(v):
     x = struct.unpack("I", struct.pack("f", float(v)))[0]
     return x
-
+    
 
 def load_config_prefix(config):
     name = config.get_name()[len("flycron ") :]
