@@ -96,7 +96,10 @@ impl UsbDevice {
 
             match self.serial.write_packet(&grant.buf()[..take]) {
                 Ok(n) => grant.release(n),
-                Err(UsbError::WouldBlock) => return,
+                Err(UsbError::WouldBlock) => {
+                    USB_TX_WAITING.signal(());
+                    return;
+                }
                 Err(e) => {
                     grant.release(take);
                     defmt::error!("USB send error: {}", e);
