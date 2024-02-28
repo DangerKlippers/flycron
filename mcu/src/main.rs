@@ -7,6 +7,7 @@ mod clock;
 mod commands;
 mod detail;
 mod dshot;
+mod encoder;
 mod pid;
 mod stepper_emulation;
 mod trsync;
@@ -24,11 +25,13 @@ mod app {
         commands::{CommandContext, CommandInterfaces},
         create_stm32_tim2_monotonic_token,
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
+        encoder::Encoder,
         hal::{prelude::*, qei::Qei},
-        pid::{next_pid_times, PidGains},
+        pid::next_pid_times,
         usb::*,
     };
     use bbqueue::BBBuffer;
+    use control_law::PidGains;
     use core::mem::MaybeUninit;
     use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
@@ -36,14 +39,14 @@ mod app {
     struct Shared {
         usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
-        encoder: Qei<stm32f4xx_hal::pac::TIM5>,
+        encoder: Encoder<crate::hal::pac::TIM5>,
 
         dshot_throttle: Signal<CriticalSectionRawMutex, ThrottleCommand>,
         dshot: Dshot,
         dshot_complete: Signal<CriticalSectionRawMutex, ()>,
 
         pid_gains: Signal<CriticalSectionRawMutex, PidGains>,
-        pid_setpoint: portable_atomic::AtomicF32,
+        pid_setpoint: portable_atomic::AtomicI32,
         pid_set_enable: portable_atomic::AtomicBool,
     }
 
@@ -100,13 +103,13 @@ mod app {
 
         let command_state = crate::commands::CommandState::init();
 
-        let encoder = Qei::new(
+        let encoder = Encoder::new(Qei::new(
             cx.device.TIM5,
             (
                 gpioa.pa0.into_pull_up_input(),
                 gpioa.pa1.into_pull_up_input(),
             ),
-        );
+        ));
 
         let out = gpiob.pb4.into_push_pull_output();
         let dshot = crate::dshot::Dshot::new(
@@ -131,7 +134,7 @@ mod app {
                 dshot_complete: Signal::new(),
 
                 pid_gains: Signal::new(),
-                pid_setpoint: portable_atomic::AtomicF32::new(5000.0),
+                pid_setpoint: portable_atomic::AtomicI32::new(5000),
                 pid_set_enable: portable_atomic::AtomicBool::new(true),
             },
             Local {},
@@ -220,9 +223,7 @@ mod app {
         ]
     )]
     async fn pid_loop(cx: pid_loop::Context) {
-        let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
-        controller.p(0.12, 0.12);
-        controller.i(0.12, 0.12);
+        let mut controller = control_law::Controller::default();
         let mut ticks = next_pid_times();
         loop {
             let next_time = ticks.next().unwrap();
@@ -238,20 +239,11 @@ mod app {
             if cx.shared.pid_gains.signaled() {
                 // NOTE: Will return immediately because we checked for signal
                 let gains = cx.shared.pid_gains.wait().await;
-                controller
-                    .p(gains.p, gains.p_max)
-                    .i(gains.i, gains.i_max)
-                    .d(gains.d, gains.d_max);
+                controller.update_gains(0, &gains);
             }
 
             // TODO: Add scaling to stepper units or something?
-            let current_position;
-            let raw_pulse_count = cx.shared.encoder.count() as i32;
-            if raw_pulse_count > i32::MAX {
-                current_position = -(u32::MAX as i32 - raw_pulse_count) as f32;
-            } else {
-                current_position = raw_pulse_count as f32;
-            }
+            let current_position = cx.shared.encoder.count();
             // defmt::info!("Raw pulse count: {}", raw_pulse_count);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = cx
@@ -259,27 +251,7 @@ mod app {
                 .pid_setpoint
                 .load(portable_atomic::Ordering::Relaxed);
 
-            controller.setpoint(target_position);
-            let desired_thrust = controller.next_control_output(current_position).output;
-
-            let max_thrust = 408.0;
-            let target_thrust = desired_thrust * max_thrust;
-            let throttle = 1.0f32;
-
-            // let a = 427.0;
-            // let b = -22.1;
-            // let c = 3.56 - target_thrust;
-            // let discriminant: f32 = b * b - 4.0 * a * c;
-            // let actual_throttle = if discriminant > 0.0 {
-            //     let sqrt_discriminant = discriminant.sqrt();
-            //     let x1 = (-b + sqrt_discriminant) / (2.0 * a);
-            //     let x2 = (-b - sqrt_discriminant) / (2.0 * a);
-            //     x1.max(x2) // take the positive one
-            // } else if discriminant == 0.0 {
-            //     -b / (2.0 * a)
-            // } else {
-            //     0.0
-            // };
+            let throttle = controller.update(target_position, current_position);
 
             let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
             // defmt::info!("Throttle: {}", scaled_throttle as u16);

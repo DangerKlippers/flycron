@@ -1,5 +1,6 @@
-use crate::{clock::Clock, pid::PidGains};
+use crate::clock::Clock;
 use anchor::*;
+use control_law::PidGains;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
 pub struct CommandState {
@@ -14,7 +15,7 @@ impl CommandState {
 
 pub struct CommandInterfaces<'ctx> {
     pub pid_gains: &'ctx Signal<CriticalSectionRawMutex, PidGains>,
-    pub pid_setpoint: &'ctx portable_atomic::AtomicF32,
+    pub pid_setpoint: &'ctx portable_atomic::AtomicI32,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
 }
 

@@ -1,5 +1,5 @@
 [workspace]
-members = ["mcu"]
+members = [ "control-law","mcu"]
 resolver = "2"
 
 [patch.crates-io]

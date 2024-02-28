@@ -4,6 +4,7 @@ use core::mem::transmute_copy;
 use fugit::HertzU64;
 
 use crate::clock::{Clock, Duration, Instant};
+use control_law::PidGains;
 
 pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(8000));
 
@@ -29,16 +30,6 @@ pub fn next_pid_times() -> impl Iterator<Item = Instant> {
     })
 }
 
-#[derive(Default)]
-pub struct PidGains {
-    pub p: f32,
-    pub p_max: f32,
-    pub i: f32,
-    pub i_max: f32,
-    pub d: f32,
-    pub d_max: f32,
-}
-
 #[klipper_command]
 pub fn pid_set_gains(
     context: &mut CommandContext,
@@ -62,11 +53,10 @@ pub fn pid_set_gains(
 
 #[klipper_command]
 pub fn pid_set_setpoint(context: &mut CommandContext, setpoint: u32) {
-    let value: f32 = unsafe { transmute_copy(&setpoint) };
     context
         .interfaces
         .pid_setpoint
-        .store(value, portable_atomic::Ordering::SeqCst);
+        .store(setpoint as i32, portable_atomic::Ordering::SeqCst);
 }
 #[klipper_command]
 pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
