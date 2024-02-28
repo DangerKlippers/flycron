@@ -25,13 +25,12 @@ mod app {
         create_stm32_tim2_monotonic_token,
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
         hal::{prelude::*, qei::Qei},
-        pid::{next_pid_time, PidGains},
+        pid::{next_pid_times, PidGains},
         usb::*,
     };
     use bbqueue::BBBuffer;
-    use core::mem::{discriminant, MaybeUninit};
+    use core::mem::MaybeUninit;
     use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
-    use micromath::F32Ext;
 
     #[shared]
     struct Shared {
@@ -115,7 +114,7 @@ mod app {
             cx.device.TIM3,
             out,
             clocks.timclk1(),
-            DShotSpeed::Speed150kHz,
+            DShotSpeed::Speed300kHz,
         );
 
         dshot_loop::spawn().ok();
@@ -210,13 +209,23 @@ mod app {
         }
     }
 
-    #[task(priority = 7, shared = [&encoder, &dshot_throttle, &pid_gains, &pid_setpoint, &pid_set_enable])]
+    #[task(
+        priority = 7,
+        shared = [
+            &encoder,
+            &dshot_throttle,
+            &pid_gains,
+            &pid_setpoint,
+            &pid_set_enable,
+        ]
+    )]
     async fn pid_loop(cx: pid_loop::Context) {
         let mut controller = ::pid::Pid::<f32>::new(0.0f32, 1.0);
         controller.p(0.12, 0.12);
         controller.i(0.12, 0.12);
+        let mut ticks = next_pid_times();
         loop {
-            let next_time = next_pid_time();
+            let next_time = ticks.next().unwrap();
             Clock::delay_until(next_time).await;
             if !cx
                 .shared
@@ -251,30 +260,28 @@ mod app {
                 .load(portable_atomic::Ordering::Relaxed);
 
             controller.setpoint(target_position);
-            let throttle = controller.next_control_output(current_position).output;
-            let mut actual_throttle: f32;
+            let desired_thrust = controller.next_control_output(current_position).output;
+
             let max_thrust = 408.0;
-            let target_thrust = throttle * max_thrust;
+            let target_thrust = desired_thrust * max_thrust;
+            let throttle = 1.0f32;
 
-            let a = 427.0;
-            let b = -22.1;
-            let c = 3.56 - target_thrust;
-            let discriminant: f32 = b * b - 4.0 * a * c;
-            if discriminant > 0.0 {
-                let sqrt_discriminant = discriminant.sqrt();
-                let x1 = (-b + sqrt_discriminant) / (2.0 * a);
-                let x2 = (-b - sqrt_discriminant) / (2.0 * a);
-                actual_throttle = x1.max(x2); // take the positive one
-            } else if discriminant == 0.0 {
-                actual_throttle = -b / (2.0 * a);
-            } else {
-                actual_throttle = 0.0;
-            }
-            if throttle < 0.0 {
-                actual_throttle = 0.0;
-            }
+            // let a = 427.0;
+            // let b = -22.1;
+            // let c = 3.56 - target_thrust;
+            // let discriminant: f32 = b * b - 4.0 * a * c;
+            // let actual_throttle = if discriminant > 0.0 {
+            //     let sqrt_discriminant = discriminant.sqrt();
+            //     let x1 = (-b + sqrt_discriminant) / (2.0 * a);
+            //     let x2 = (-b - sqrt_discriminant) / (2.0 * a);
+            //     x1.max(x2) // take the positive one
+            // } else if discriminant == 0.0 {
+            //     -b / (2.0 * a)
+            // } else {
+            //     0.0
+            // };
 
-            let scaled_throttle = actual_throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
+            let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
             // defmt::info!("Throttle: {}", scaled_throttle as u16);
             cx.shared
                 .dshot_throttle

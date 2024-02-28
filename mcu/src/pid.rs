@@ -10,12 +10,23 @@ pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(8000));
 pub fn next_pid_time() -> Instant {
     let now = Clock::now();
     // Round down to
-    let remainder = Duration::from_ticks(now.ticks() % PID_PERIOD.ticks());
-    now + PID_PERIOD - remainder
+    let remainder_ticks = now.ticks() % PID_PERIOD.ticks();
+    // In theory, remainder_ticks would be zero if we ask for next time exactly on the target time.
+    // In practice, we'd really already have missed the target in that case, so we'll just ignore
+    // this case to save a few instructions on the comparison
+    now + PID_PERIOD - Duration::from_ticks(remainder_ticks)
 }
 
-pub fn next_pid_ticks() -> impl Iterator<Item = Instant> {
-    core::iter::successors(Some(next_pid_time()), |prev| Some(*prev + PID_PERIOD))
+pub fn next_pid_times() -> impl Iterator<Item = Instant> {
+    core::iter::successors(Some(next_pid_time()), |prev| {
+        let mut next = *prev;
+        loop {
+            next += PID_PERIOD;
+            if next >= Clock::now() {
+                return Some(next);
+            }
+        }
+    })
 }
 
 #[derive(Default)]
