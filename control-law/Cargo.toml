@@ -6,3 +6,7 @@ edition = "2021"
 [dependencies]
 pid = "4.0.0"
 micromath = "2.1.0"
+
+[features]
+std = []
+telemetry = []

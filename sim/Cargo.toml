@@ -1,0 +1,10 @@
+[package]
+name = "sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+control_law = { path = "../control-law", features = ["std", "telemetry"] }
+csv = "1.3.0"
+dimensioned = "0.8"
+serde = { version = "1.0.197", features = ["derive"] }
