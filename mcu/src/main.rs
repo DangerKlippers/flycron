@@ -242,9 +242,7 @@ mod app {
                 controller.update_gains(0, &gains);
             }
 
-            // TODO: Add scaling to stepper units or something?
             let current_position = cx.shared.encoder.count();
-            // defmt::info!("Raw pulse count: {}", raw_pulse_count);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
             let target_position = cx
                 .shared
