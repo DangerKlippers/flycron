@@ -249,7 +249,9 @@ mod app {
                 .pid_setpoint
                 .load(portable_atomic::Ordering::Relaxed);
 
-            let throttle = controller.update(target_position, current_position).output;
+            let throttle = controller
+                .update(target_position, 0.0, 0.0, current_position)
+                .output;
 
             let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
             // defmt::info!("Throttle: {}", scaled_throttle as u16);

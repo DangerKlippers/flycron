@@ -1,4 +1,11 @@
-use dimensioned::{f64prefixes::*, si::*};
+use std::collections::VecDeque;
+
+use dimensioned::{f64prefixes::*, si::*, Dimensioned};
+use lib_klipper::{
+    gcode::{parse_gcode, GCodeCommand, GCodeOperation},
+    glam::DVec4,
+    planner::{Planner, PlanningMove, PlanningOperation, PrinterLimits},
+};
 use serde::Serialize;
 
 #[derive(Debug)]
@@ -75,12 +82,188 @@ impl Default for Plant {
     }
 }
 
+// #[derive(Debug)]
+// pub struct Move {
+//     start_time: Second<f64>,
+//     start: Meter<f64>,
+//     end: Meter<f64>,
+//     velocity: MeterPerSecond<f64>,
+//     accel: MeterPerSecond2<f64>,
+// }
+//
+// impl Move {
+//     fn new(
+//         start_time: Second<f64>,
+//         start: Meter<f64>,
+//         end: Meter<f64>,
+//         velocity: MeterPerSecond<f64>,
+//         accel: MeterPerSecond2<f64>,
+//     ) -> Self {
+//         Self {
+//             start_time,
+//             start,
+//             end,
+//             velocity,
+//             accel,
+//         }
+//     }
+// }
+
+#[derive(Debug)]
+pub struct ZMoveQueue {
+    location: Meter<f64>,
+    velocity: MeterPerSecond<f64>,
+    acceleration: MeterPerSecond2<f64>,
+    queue: VecDeque<(Second<f64>, PlanningMove)>,
+    planner: Planner,
+    cur_time: Second<f64>,
+    next_time: Second<f64>,
+}
+
+impl ZMoveQueue {
+    pub fn new(location: Meter<f64>) -> Self {
+        let limits = PrinterLimits {
+            ..Default::default()
+        };
+        Self {
+            location,
+            velocity: 0.0 * MPS,
+            acceleration: 0.0 * MPS2,
+            queue: VecDeque::new(),
+            planner: Planner::from_limits(limits),
+            cur_time: 0.0 * S,
+            next_time: 0.0 * S,
+        }
+    }
+
+    pub fn add_move(
+        &mut self,
+        delay: Option<Second<f64>>,
+        target: Meter<f64>,
+        velocity: MeterPerSecond<f64>,
+        accel: MeterPerSecond2<f64>,
+    ) {
+        let accel = accel / MILLI;
+        self.planner.process_cmd(
+            &parse_gcode(&format!(
+                "set_velocity_limit accel={accel} accel_to_decel={accel}"
+            ))
+            .unwrap(),
+        );
+        if let Some(delay) = delay {
+            let delay = delay / MILLI;
+            self.planner
+                .process_cmd(&parse_gcode(&format!("G4 P{delay}")).unwrap());
+        }
+        self.planner.process_cmd(&GCodeCommand {
+            op: GCodeOperation::Move {
+                x: None,
+                y: None,
+                z: Some(*(target / MILLI).value_unsafe()),
+                e: None,
+                f: Some(*(velocity / MILLI * MIN).value_unsafe()),
+            },
+            comment: None,
+        });
+    }
+
+    fn flush(&mut self) {
+        self.planner.finalize();
+        for o in self.planner.iter() {
+            match o {
+                PlanningOperation::Fill => {}
+                PlanningOperation::Delay(d) => {
+                    if self.next_time < self.cur_time {
+                        self.next_time = self.cur_time;
+                    }
+                    self.next_time += d.duration().as_secs_f64() * S;
+                }
+                PlanningOperation::Move(m) => {
+                    self.queue.push_back((self.next_time, m));
+                    self.next_time += m.total_time() * S;
+                }
+            }
+        }
+    }
+
+    fn retire(&mut self) {
+        loop {
+            match self.queue.front() {
+                None => return,
+                Some((s, m)) if *s + m.total_time() * S > self.cur_time => return,
+                Some(_) => {
+                    self.queue.pop_front();
+                }
+            }
+        }
+    }
+
+    pub fn eval_at(&self, time: Second<f64>) -> Meter<f64> {
+        for (s, m) in &self.queue {
+            let t = time - *s;
+            if t < 0.0 * S {
+                return self.location;
+            }
+            match eval_move(m, t) {
+                None => {}
+                Some(p) => return p.z * MILLI * M,
+            }
+        }
+        self.location
+    }
+
+    pub fn execute(&mut self, lookahead: Second<f64>) {
+        self.retire();
+        self.location = self.eval_at(self.cur_time);
+        let look1 = self.eval_at(self.cur_time + lookahead);
+        let look2 = self.eval_at(self.cur_time + 2.0 * lookahead);
+        let v2 = (look2 - look1) / lookahead;
+        self.velocity = (look1 - self.location) / lookahead;
+        self.acceleration = (v2 - self.velocity) / lookahead;
+    }
+
+    pub fn update(&mut self, target_time: Second<f64>, lookahead: Second<f64>) -> Meter<f64> {
+        self.cur_time = target_time;
+        self.flush();
+        self.execute(lookahead);
+        self.location
+    }
+}
+
+fn eval_move(mov: &PlanningMove, t: Second<f64>) -> Option<DVec4> {
+    let t = t.value_unsafe;
+
+    let atime = mov.accel_time();
+    let ctime = mov.cruise_time();
+    let dtime = mov.decel_time();
+
+    if t < 0.0 {
+        return None;
+    };
+    let ta = t.min(atime);
+    let adist = mov.start_v * ta + 0.5 * mov.acceleration * ta * ta;
+    if t <= atime {
+        return Some(mov.start + mov.rate * adist);
+    }
+    let tc = (t - ta).min(ctime);
+    let cdist = mov.cruise_v * tc;
+    if t <= atime + ctime {
+        return Some(mov.start + mov.rate * (adist + cdist));
+    }
+    let td = (t - ta - tc).min(dtime);
+    if t <= atime + ctime + dtime {
+        let ddist = mov.cruise_v * ta - 0.5 * mov.acceleration * td * td;
+        return Some(mov.start + mov.rate * (adist + cdist + ddist));
+    }
+    None
+}
+
 #[derive(Debug)]
 struct Simulator {
     ticks_per_second: Hertz<f64>,
     controller_ticks_per_second: Hertz<f64>,
 
-    setpoint: Meter<f64>,
+    move_queue: ZMoveQueue,
     controller: control_law::Controller,
     system: Plant,
     time: Second<f64>,
@@ -129,11 +312,15 @@ impl Simulator {
 
     fn run_round(&mut self, dt: Second<f64>) -> Telemetry {
         let mut t = Telemetry::new(self.time);
-        t.setpoint = self.setpoint;
+        self.move_queue
+            .update(self.time, 1.0 / self.controller_ticks_per_second);
+        t.setpoint = self.move_queue.location;
         if self.next_controller_update <= self.time {
             t.controlled = true;
             let output = self.controller.update(
-                (self.setpoint * self.system.encoder_scale).round() as i32,
+                (self.move_queue.location * self.system.encoder_scale).round() as i32,
+                self.move_queue.velocity.value_unsafe as f32,
+                self.move_queue.acceleration.value_unsafe as f32,
                 self.system.current_position(),
             );
             self.system.set_input_throttle(output.output as f64);
@@ -159,7 +346,7 @@ fn main() {
         ticks_per_second: 128000.0 * HZ,
         controller_ticks_per_second: 8000.0 * HZ,
 
-        setpoint: 50.0 * MILLI * M,
+        move_queue: ZMoveQueue::new(0.0 * MILLI * M),
         controller: Default::default(),
         system: Default::default(),
         time: 0.0 * S,
@@ -181,20 +368,41 @@ fn main() {
         },
     );
 
-    println!("{sim:#?}");
-
     let mut writer = csv::Writer::from_path("/tmp/sim.csv").expect("CSV writer creation failed");
 
+    sim.move_queue.add_move(
+        Some(2.0 * S),
+        60.0 * MILLI * M,
+        30.0 * MILLI * MPS,
+        2000.0 * MILLI * MPS2,
+    );
+    sim.move_queue.add_move(
+        Some(2.0 * S),
+        65.0 * MILLI * M,
+        30.0 * MILLI * MPS,
+        2000.0 * MILLI * MPS2,
+    );
+
+    sim.move_queue.add_move(
+        Some(2.0 * S),
+        65.2 * MILLI * M,
+        30.0 * MILLI * MPS,
+        2000.0 * MILLI * MPS2,
+    );
+
+    sim.move_queue.flush();
+    // println!("{sim:#?}");
+
     sim.run(10.00 * S, |t| {
-        writer.serialize(&t).expect("Could not write row");
+        writer.serialize(t).expect("Could not write row");
     });
 
     sim.system.mass = 110.0 * MILLI * KG;
     sim.run(10.00 * S, |t| {
-        writer.serialize(&t).expect("Could not write row");
+        writer.serialize(t).expect("Could not write row");
     });
 
-    println!("{sim:#?}");
+    // println!("{sim:#?}");
 }
 
 impl Serialize for Telemetry {
@@ -202,7 +410,6 @@ impl Serialize for Telemetry {
     where
         S: serde::Serializer,
     {
-        use dimensioned::Dimensioned;
         use serde::ser::SerializeStruct;
         let mut s = serializer.serialize_struct("Telemetry", 8)?;
         s.serialize_field("time", &self.time.value_unsafe())?;

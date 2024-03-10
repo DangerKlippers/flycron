@@ -53,7 +53,13 @@ impl Controller {
             .d(gains.d, gains.d_max);
     }
 
-    pub fn update(&mut self, target_position: i32, current_position: i32) -> Output {
+    pub fn update(
+        &mut self,
+        target_position: i32,
+        _target_velocity: f32,
+        _target_acceleration: f32,
+        current_position: i32,
+    ) -> Output {
         self.pid0.setpoint(target_position as f32);
         let pid_output = self.pid0.next_control_output(current_position as f32);
         let output = self.thrust_to_throttle(pid_output.output, 100.0);
