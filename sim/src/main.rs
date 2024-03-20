@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use control_law::ControllerTelemetry;
 use dimensioned::{f64prefixes::*, si::*, Dimensioned};
 use lib_klipper::{
     gcode::{parse_gcode, GCodeCommand, GCodeOperation},
@@ -284,9 +285,7 @@ struct Telemetry {
     accel: MeterPerSecond2<f64>,
     throttle: f64,
 
-    pid_p: f32,
-    pid_i: f32,
-    pid_d: f32,
+    controller: ControllerTelemetry,
 }
 
 impl Telemetry {
@@ -327,9 +326,7 @@ impl Simulator {
             self.next_controller_update += 1.0 / self.controller_ticks_per_second;
             self.controller_updates += 1;
 
-            t.pid_p = output.telemetry.p;
-            t.pid_i = output.telemetry.i;
-            t.pid_d = output.telemetry.d;
+            t.controller = output.telemetry;
         }
 
         self.system.tick(dt, &mut t);
@@ -359,11 +356,22 @@ fn main() {
     sim.controller.update_gains(
         0,
         &control_law::PidGains {
-            p: 0.00008,
+            p: 0.3,
             p_max: 1.0,
-            i: 0.00000002,
+            i: 0.0,
             i_max: 1.0,
-            d: 0.02,
+            d: 0.0,
+            d_max: 1.0,
+        },
+    );
+    sim.controller.update_gains(
+        1,
+        &control_law::PidGains {
+            p: 0.4,
+            p_max: 1.0,
+            i: 0.0,
+            i_max: 1.0,
+            d: 0.0,
             d_max: 1.0,
         },
     );
@@ -411,16 +419,19 @@ impl Serialize for Telemetry {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Telemetry", 8)?;
+        let mut s = serializer.serialize_struct("Telemetry", 11)?;
         s.serialize_field("time", &self.time.value_unsafe())?;
         s.serialize_field("setpoint", &(self.setpoint / MILLI).value_unsafe())?;
         s.serialize_field("position", &(self.position / MILLI).value_unsafe())?;
         s.serialize_field("velocity", &(self.velocity / MILLI).value_unsafe())?;
         s.serialize_field("accel", &(self.accel).value_unsafe())?;
         s.serialize_field("throttle", &self.throttle)?;
-        s.serialize_field("pid_p", &self.pid_p)?;
-        s.serialize_field("pid_i", &self.pid_i)?;
-        s.serialize_field("pid_d", &self.pid_d)?;
+        s.serialize_field("pid_pos_p", &self.controller.pos_p)?;
+        s.serialize_field("pid_pos_i", &self.controller.pos_i)?;
+        s.serialize_field("pid_pos_d", &self.controller.pos_d)?;
+        s.serialize_field("pid_vel_p", &self.controller.vel_p)?;
+        s.serialize_field("pid_vel_i", &self.controller.vel_i)?;
+        s.serialize_field("pid_vel_d", &self.controller.vel_d)?;
         s.end()
     }
 }
