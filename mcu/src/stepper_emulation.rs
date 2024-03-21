@@ -209,3 +209,13 @@ pub fn queue_digital_out(_context: &mut CommandContext, _oid: u8, _clock: u8, _o
 pub fn update_digital_out(_context: &mut CommandContext, _oid: u8, _value: u8) {
     // TODO:
 }
+
+klipper_enumeration! {
+    #[klipper_enumeration(name = "pin", rename_all="snake_case")]
+    enum Pins {
+        Step,
+        Dir,
+        Enable,
+        Endstop,
+    }
+}
