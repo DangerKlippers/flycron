@@ -1,15 +1,23 @@
-use crate::clock::Clock;
+use crate::{clock::Clock, pid::PidTimeIterator, stepper_emulation::EmulatedStepper};
 use anchor::*;
 use control_law::PidGains;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 
 pub struct CommandState {
     pub config_crc: Option<u32>,
+
+    pub stepper_oid: Option<u8>,
+    pub stepper: EmulatedStepper,
 }
 
 impl CommandState {
     pub fn init() -> Self {
-        Self { config_crc: None }
+        Self {
+            config_crc: None,
+
+            stepper_oid: None,
+            stepper: EmulatedStepper::new(PidTimeIterator::new()),
+        }
     }
 }
 
@@ -17,6 +25,8 @@ pub struct CommandInterfaces<'ctx> {
     pub pid_gains: &'ctx Signal<CriticalSectionRawMutex, PidGains>,
     pub pid_setpoint: &'ctx portable_atomic::AtomicI32,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
+    pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
+    pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,
 }
 
 pub struct CommandContext<'ctx> {
@@ -44,7 +54,10 @@ pub fn get_clock() {
 }
 
 #[klipper_command]
-pub fn emergency_stop() {}
+pub fn emergency_stop(context: &mut CommandContext) {
+    klipper_shutdown!("Emergency stop", Clock::clock32());
+    config_reset(context);
+}
 
 #[klipper_command]
 pub fn get_config(context: &CommandContext) {
@@ -61,6 +74,7 @@ pub fn get_config(context: &CommandContext) {
 #[klipper_command]
 pub fn config_reset(context: &mut CommandContext) {
     context.state.config_crc = None;
+    context.state.stepper_oid = None;
 }
 
 #[klipper_command]

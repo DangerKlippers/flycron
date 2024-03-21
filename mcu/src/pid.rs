@@ -6,7 +6,7 @@ use fugit::HertzU64;
 use crate::clock::{Clock, Duration, Instant};
 use control_law::PidGains;
 
-pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(8000));
+pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(1000));
 
 pub fn next_pid_time() -> Instant {
     let now = Clock::now();
@@ -18,16 +18,32 @@ pub fn next_pid_time() -> Instant {
     now + PID_PERIOD - Duration::from_ticks(remainder_ticks)
 }
 
-pub fn next_pid_times() -> impl Iterator<Item = Instant> {
-    core::iter::successors(Some(next_pid_time()), |prev| {
-        let mut next = *prev;
+#[derive(Debug, defmt::Format)]
+pub struct PidTimeIterator {
+    next: Instant,
+}
+
+impl PidTimeIterator {
+    pub fn new() -> PidTimeIterator {
+        Self {
+            next: next_pid_time(),
+        }
+    }
+
+    pub fn advance(&mut self) -> Instant {
+        self.next += PID_PERIOD;
+        self.next
+    }
+
+    pub fn next(&mut self) -> Instant {
         loop {
-            next += PID_PERIOD;
-            if next >= Clock::now() {
-                return Some(next);
+            if self.next >= Clock::now() {
+                return self.next;
+            } else {
+                self.advance();
             }
         }
-    })
+    }
 }
 
 #[klipper_command]
@@ -67,3 +83,6 @@ pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
         .pid_set_enable
         .store(value, portable_atomic::Ordering::SeqCst);
 }
+
+#[cfg(test)]
+mod test {}

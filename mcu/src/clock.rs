@@ -45,6 +45,16 @@ impl Clock {
         }
     }
 
+    pub fn clock32_to_clock64(clock32: u32) -> Instant {
+        let current_time = Self::now().ticks();
+        let diff = (current_time as u32).wrapping_sub(clock32) as u64;
+        Instant::from_ticks(if diff & 0x8000_0000 != 0 {
+            current_time + 0x1_0000_0000 - diff
+        } else {
+            current_time - diff
+        })
+    }
+
     pub fn clock32() -> u32 {
         Self::register().cnt.read().cnt().bits()
     }

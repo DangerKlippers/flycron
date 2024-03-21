@@ -27,7 +27,8 @@ mod app {
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
         encoder::Encoder,
         hal::{prelude::*, qei::Qei},
-        pid::next_pid_times,
+        pid::PidTimeIterator,
+        stepper_emulation::TargetQueue,
         usb::*,
     };
     use bbqueue::BBBuffer;
@@ -37,9 +38,11 @@ mod app {
 
     #[shared]
     struct Shared {
-        usb_dev: UsbDevice,
         command_state: crate::commands::CommandState,
         encoder: Encoder<crate::hal::pac::TIM5>,
+        last_measured_position: portable_atomic::AtomicI32,
+        last_commanded_position: portable_atomic::AtomicI32,
+        target_queue: TargetQueue,
 
         dshot_throttle: Signal<CriticalSectionRawMutex, ThrottleCommand>,
         dshot: Dshot,
@@ -51,7 +54,9 @@ mod app {
     }
 
     #[local]
-    struct Local {}
+    struct Local {
+        usb_dev: UsbDevice,
+    }
 
     #[init(local = [
         usb_allocator: MaybeUninit<UsbBusAllocator> = MaybeUninit::uninit(),
@@ -95,7 +100,6 @@ mod app {
             cx.local.usb_ep_memory,
         ));
         let usb_dev = UsbDevice::init(usb_allocator, cx.local.usb_tx_queue);
-        usb_send_pump::spawn().ok();
 
         // Timebase setup
         let token = create_stm32_tim2_monotonic_token!();
@@ -122,12 +126,15 @@ mod app {
 
         dshot_loop::spawn().ok();
         pid_loop::spawn().ok();
+        stepper_move_processor::spawn().ok();
 
         (
             Shared {
-                usb_dev,
                 command_state,
                 encoder,
+                last_measured_position: portable_atomic::AtomicI32::new(0),
+                last_commanded_position: portable_atomic::AtomicI32::new(0),
+                target_queue: TargetQueue::new(),
 
                 dshot_throttle: Signal::new(),
                 dshot,
@@ -137,7 +144,7 @@ mod app {
                 pid_setpoint: portable_atomic::AtomicI32::new(5000),
                 pid_set_enable: portable_atomic::AtomicBool::new(true),
             },
-            Local {},
+            Local { usb_dev },
         )
     }
 
@@ -148,31 +155,34 @@ mod app {
         }
     }
 
-    #[task(priority = 2, shared = [usb_dev])]
-    async fn usb_send_pump(mut cx: usb_send_pump::Context) {
-        loop {
-            UsbDevice::tx_wait().await;
-            cx.shared.usb_dev.lock(|usb_dev| usb_dev.pump_write());
-        }
-    }
-
-    #[task(binds = OTG_FS, priority = 2, shared = [usb_dev, command_state, &pid_gains, &pid_setpoint, &pid_set_enable])]
+    #[task(
+        binds = OTG_FS,
+        priority = 4,
+        local = [usb_dev],
+        shared = [
+            command_state,
+            &last_measured_position,
+            &last_commanded_position,
+            &pid_gains,
+            &pid_setpoint,
+            &pid_set_enable,
+        ])]
     fn irq_usb(mut cx: irq_usb::Context) {
-        cx.shared.usb_dev.lock(|usb_dev| {
-            if usb_dev.on_interrupt() {
-                cx.shared.command_state.lock(|cs| {
-                    usb_dev.handle_commands(CommandContext {
-                        state: cs,
-                        interfaces: CommandInterfaces {
-                            pid_gains: cx.shared.pid_gains,
-                            pid_setpoint: cx.shared.pid_setpoint,
-                            pid_set_enable: cx.shared.pid_set_enable,
-                        },
-                    })
-                });
-                usb_dev.pump_write();
-            }
-        });
+        if cx.local.usb_dev.on_interrupt() {
+            cx.shared.command_state.lock(|cs| {
+                cx.local.usb_dev.handle_commands(CommandContext {
+                    state: cs,
+                    interfaces: CommandInterfaces {
+                        pid_gains: cx.shared.pid_gains,
+                        pid_setpoint: cx.shared.pid_setpoint,
+                        pid_set_enable: cx.shared.pid_set_enable,
+                        pid_last_measured_position: cx.shared.last_measured_position,
+                        pid_last_commanded_position: cx.shared.last_commanded_position,
+                    },
+                })
+            });
+            cx.local.usb_dev.pump_write();
+        }
     }
 
     #[task(priority = 8, shared = [dshot, &dshot_complete, &dshot_throttle])]
@@ -186,7 +196,7 @@ mod app {
             Clock::delay(Duration::millis(1)).await;
         }
         defmt::info!("Armed, entering throttle loop");
-        let mut cnt = 0;
+        // let mut cnt = 0;
         let mut last_report = Clock::now();
         loop {
             let throttle = cx.shared.dshot_throttle.wait().await;
@@ -194,13 +204,13 @@ mod app {
                 .dshot
                 .lock(|dshot| dshot.send_throttle(throttle.into()));
             cx.shared.dshot_complete.wait().await;
-            cnt += 1;
+            // cnt += 1;
 
             let now = Clock::now();
-            if now >= last_report + crate::clock::Duration::millis(1000) {
+            if now >= last_report + Duration::millis(1000) {
                 last_report = now;
-                defmt::info!("COUNT {}, LAST VAL {}", cnt, throttle);
-                cnt = 0;
+                // defmt::info!("COUNT {}, LAST VAL {}", cnt, throttle);
+                // cnt = 0;
             }
         }
     }
@@ -213,9 +223,26 @@ mod app {
     }
 
     #[task(
+        priority = 4,
+        shared = [
+            command_state,
+            &target_queue,
+        ]
+    )]
+    async fn stepper_move_processor(mut cx: stepper_move_processor::Context) {
+        loop {
+            Clock::delay(Duration::millis(100)).await;
+            crate::stepper_emulation::process_moves(&mut cx);
+        }
+    }
+
+    #[task(
         priority = 7,
         shared = [
             &encoder,
+            &last_measured_position,
+            &last_commanded_position,
+            &target_queue,
             &dshot_throttle,
             &pid_gains,
             &pid_setpoint,
@@ -224,9 +251,10 @@ mod app {
     )]
     async fn pid_loop(cx: pid_loop::Context) {
         let mut controller = control_law::Controller::default();
-        let mut ticks = next_pid_times();
+        let mut ticks = PidTimeIterator::new();
+        let mut last_pos = 0u32;
         loop {
-            let next_time = ticks.next().unwrap();
+            let next_time = ticks.next();
             Clock::delay_until(next_time).await;
             if !cx
                 .shared
@@ -243,14 +271,41 @@ mod app {
             }
 
             let current_position = cx.shared.encoder.count();
+            cx.shared
+                .last_measured_position
+                .store(current_position, portable_atomic::Ordering::SeqCst);
             // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
-            let target_position = cx
-                .shared
-                .pid_setpoint
-                .load(portable_atomic::Ordering::Relaxed);
+            //
+            let (c0, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
+            let target_position = if let Some((_, v0)) = c0 {
+                last_pos = v0;
+                v0
+            } else {
+                last_pos
+            } as i32;
+            cx.shared
+                .last_commanded_position
+                .store(target_position, portable_atomic::Ordering::SeqCst);
+
+            let v0 = match (c0, c1) {
+                (Some((t0, p0)), Some((t1, p1))) => {
+                    (p1.wrapping_sub(p0) as f32) / ((t1 - t0).ticks() as f32)
+                }
+                _ => 0.0,
+            };
+            let v1 = match (c1, c2) {
+                (Some((t1, p1)), Some((t2, p2))) => {
+                    (p2.wrapping_sub(p1) as f32) / ((t2 - t1).ticks() as f32)
+                }
+                _ => 0.0,
+            };
+            let a0 = match (v0, v1, c1, c2) {
+                (v0, v1, Some((t1, _)), Some((t2, _))) => (v1 - v0) / ((t2 - t1).ticks() as f32),
+                _ => 0.0,
+            };
 
             let throttle = controller
-                .update(target_position, 0.0, 0.0, current_position)
+                .update(target_position, v0, a0, current_position)
                 .output;
 
             let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;

@@ -1,5 +1,5 @@
 [workspace]
-members = [ "control-law","mcu", "sim"]
+members = [ "control-law","mcu", "sim", "stepperemu"]
 resolver = "2"
 
 [patch.crates-io]

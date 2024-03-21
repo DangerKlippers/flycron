@@ -1,7 +1,6 @@
 use crate::{commands::CommandContext, hal};
 use anchor::*;
 use core::mem::MaybeUninit;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
 pub use hal::otg_fs::{UsbBusType as UsbBus, USB};
 use usb_device::{
     bus,
@@ -56,6 +55,7 @@ impl UsbDevice {
         if self.device.poll(&mut [&mut self.serial]) {
             self.read_all();
         }
+        self.pump_write();
         !self.rx_buffer.is_empty()
     }
 
@@ -97,7 +97,6 @@ impl UsbDevice {
             match self.serial.write_packet(&grant.buf()[..take]) {
                 Ok(n) => grant.release(n),
                 Err(UsbError::WouldBlock) => {
-                    USB_TX_WAITING.signal(());
                     return;
                 }
                 Err(e) => {
@@ -107,15 +106,10 @@ impl UsbDevice {
             }
         }
     }
-
-    pub async fn tx_wait() {
-        USB_TX_WAITING.wait().await
-    }
 }
 
 static mut USB_TX_PRODUCER: MaybeUninit<bbqueue::Producer<'static, USB_OUTPUT_BUFFER_SIZE>> =
     MaybeUninit::uninit();
-static USB_TX_WAITING: Signal<CriticalSectionRawMutex, ()> = Signal::new();
 pub struct BufferTransportOutput;
 pub const TRANSPORT_OUTPUT: BufferTransportOutput = BufferTransportOutput;
 
@@ -130,7 +124,7 @@ impl anchor::TransportOutput for BufferTransportOutput {
         if let Ok(mut grant) = producer.grant_exact(output.len()) {
             grant.buf().copy_from_slice(output);
             grant.commit(output.len());
-            USB_TX_WAITING.signal(());
+            cortex_m::peripheral::NVIC::pend(hal::pac::Interrupt::OTG_FS);
         }
     }
 }
