@@ -53,6 +53,9 @@ impl UsbDevice {
 
     pub fn on_interrupt(&mut self) -> bool {
         if self.device.poll(&mut [&mut self.serial]) {
+            if self.serial.line_coding().data_rate() == 1200 {
+                crate::detail::reset_to_bootloader();
+            }
             self.read_all();
         }
         self.pump_write();

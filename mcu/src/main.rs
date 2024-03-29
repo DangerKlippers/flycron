@@ -64,6 +64,8 @@ mod app {
         usb_tx_queue: BBBuffer<USB_OUTPUT_BUFFER_SIZE> = BBBuffer::new(),
     ])]
     fn init(cx: init::Context) -> (Shared, Local) {
+        crate::detail::bootloader_check();
+
         defmt::info!("init");
         // Following needed to let RTT attach during sleep
         cx.device.DBGMCU.cr.modify(|_, w| {
