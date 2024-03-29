@@ -52,3 +52,6 @@ pub fn bootloader_check() {
         }
     }
 }
+
+#[cfg(all(not(feature = "crystal-25mhz"), not(feature = "crystal-8mhz")))]
+compile_error!("Must specify crystal-25mhz or crystal-8mhz feature!");

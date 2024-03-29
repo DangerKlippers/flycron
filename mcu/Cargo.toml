@@ -30,3 +30,7 @@ heapless = { version = "0.8.0", features = ["defmt-03"] }
 
 [build-dependencies]
 anchor_codegen = { git = "https://github.com/Annex-Engineering/anchor.git" }
+
+[features]
+crystal-8mhz = []
+crystal-25mhz = []

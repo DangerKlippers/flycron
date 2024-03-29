@@ -77,7 +77,10 @@ mod app {
 
         // Clock setup
         let rcc = cx.device.RCC.constrain();
+        #[cfg(feature = "crystal-25mhz")]
         let hse = 25.MHz();
+        #[cfg(feature = "crystal-8mhz")]
+        let hse = 8.MHz();
         let sysclk = 96.MHz();
         let clocks = rcc
             .cfgr
