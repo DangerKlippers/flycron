@@ -201,7 +201,7 @@ pub fn config_digital_out(
 }
 
 #[klipper_command]
-pub fn queue_digital_out(_context: &mut CommandContext, _oid: u8, _clock: u8, _on_ticks: u32) {
+pub fn queue_digital_out(_context: &mut CommandContext, _oid: u8, _clock: u32, _on_ticks: u32) {
     // TODO:
 }
 
