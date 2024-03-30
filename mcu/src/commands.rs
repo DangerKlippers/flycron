@@ -67,7 +67,7 @@ pub fn get_config(context: &CommandContext) {
         is_config: bool = crc.is_some(),
         crc: u32 = crc.unwrap_or(0),
         is_shutdown: bool = false,
-        move_count: u16 = 0
+        move_count: u16 = 6000
     );
 }
 
