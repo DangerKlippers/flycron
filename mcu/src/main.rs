@@ -58,14 +58,17 @@ mod app {
         usb_dev: UsbDevice,
     }
 
+    #[cortex_m_rt::pre_init]
+    unsafe fn pre_init() {
+        crate::detail::bootloader_check();
+    }
+
     #[init(local = [
         usb_allocator: MaybeUninit<UsbBusAllocator> = MaybeUninit::uninit(),
         usb_ep_memory: [u32; 1024] = [0; 1024],
         usb_tx_queue: BBBuffer<USB_OUTPUT_BUFFER_SIZE> = BBBuffer::new(),
     ])]
     fn init(cx: init::Context) -> (Shared, Local) {
-        crate::detail::bootloader_check();
-
         defmt::info!("init");
         // Following needed to let RTT attach during sleep
         cx.device.DBGMCU.cr.modify(|_, w| {
