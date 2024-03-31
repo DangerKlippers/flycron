@@ -66,6 +66,7 @@ impl Controller {
         target_acceleration: f32,
         current_position: i32,
     ) -> Output {
+        self.pid_vel.p(0.2, 1.0);
         self.pid_pos.setpoint(target_position as f32);
         let pid_pos_out = self.pid_pos.next_control_output(current_position as f32);
 
