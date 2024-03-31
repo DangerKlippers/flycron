@@ -276,6 +276,7 @@ mod app {
                 // NOTE: Will return immediately because we checked for signal
                 let gains = cx.shared.pid_gains.wait().await;
                 controller.update_gains(0, &gains);
+                // controller.update_gains(1, &gains);
             }
 
             let current_position = cx.shared.encoder.count();
