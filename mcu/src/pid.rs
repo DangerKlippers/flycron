@@ -62,14 +62,11 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
             continue;
         }
-        if cx.shared.pid_gains.signaled() {
-            // NOTE: Will return immediately because we checked for signal
-            let gains = cx.shared.pid_gains.wait().await;
-            controller.update_gains(0, &gains);
+        if let Ok((target, gains)) = cx.shared.pid_gains.try_receive() {
+            controller.update_gains(target as usize, &gains);
         }
-        if cx.shared.filter_coefs.signaled() {
-            let (a, b) = cx.shared.filter_coefs.wait().await;
-            controller.update_filters(0, a, b);
+        if let Ok((target, a, b)) = cx.shared.filter_coefs.try_receive() {
+            controller.update_filters(target as usize, a, b);
         }
 
         let current_position = cx.shared.encoder.count();
@@ -127,6 +124,7 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
 #[klipper_command]
 pub fn pid_set_gains(
     context: &mut CommandContext,
+    target: u32,
     limit: u32,
     p: u32,
     p_max: u32,
@@ -144,7 +142,16 @@ pub fn pid_set_gains(
         d: unsafe { transmute_copy(&d) },
         d_max: unsafe { transmute_copy(&d_max) },
     };
-    context.interfaces.pid_gains.signal(gains);
+    let _ = context.interfaces.pid_gains.try_send((target as u8, gains));
+}
+
+#[klipper_command]
+pub fn pid_set_coefs(context: &mut CommandContext, target: u32, alpha: u32, beta: u32) {
+    let _ = context.interfaces.filter_coefs.try_send((
+        target as u8,
+        unsafe { transmute_copy(&alpha) },
+        unsafe { transmute_copy(&beta) },
+    ));
 }
 
 #[klipper_command]

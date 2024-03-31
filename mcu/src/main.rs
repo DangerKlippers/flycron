@@ -33,7 +33,9 @@ mod app {
     use bbqueue::BBBuffer;
     use control_law::PidGains;
     use core::mem::MaybeUninit;
-    use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+    use embassy_sync::{
+        blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+    };
 
     #[shared]
     struct Shared {
@@ -47,8 +49,8 @@ mod app {
         dshot: Dshot,
         dshot_complete: Signal<CriticalSectionRawMutex, ()>,
 
-        pid_gains: Signal<CriticalSectionRawMutex, PidGains>,
-        filter_coefs: Signal<CriticalSectionRawMutex, (f32, f32)>,
+        pid_gains: Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
+        filter_coefs: Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
         pid_setpoint: portable_atomic::AtomicI32,
         pid_set_enable: portable_atomic::AtomicBool,
     }
@@ -148,8 +150,8 @@ mod app {
                 dshot,
                 dshot_complete: Signal::new(),
 
-                pid_gains: Signal::new(),
-                filter_coefs: Signal::new(),
+                pid_gains: Channel::new(),
+                filter_coefs: Channel::new(),
                 pid_setpoint: portable_atomic::AtomicI32::new(5000),
                 pid_set_enable: portable_atomic::AtomicBool::new(true),
             },
@@ -173,6 +175,7 @@ mod app {
             &last_measured_position,
             &last_commanded_position,
             &pid_gains,
+            &filter_coefs,
             &pid_setpoint,
             &pid_set_enable,
         ])]
@@ -183,6 +186,7 @@ mod app {
                     state: cs,
                     interfaces: CommandInterfaces {
                         pid_gains: cx.shared.pid_gains,
+                        filter_coefs: cx.shared.filter_coefs,
                         pid_setpoint: cx.shared.pid_setpoint,
                         pid_set_enable: cx.shared.pid_set_enable,
                         pid_last_measured_position: cx.shared.last_measured_position,

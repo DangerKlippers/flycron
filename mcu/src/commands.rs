@@ -1,7 +1,7 @@
 use crate::{clock::Clock, pid::PidTimeIterator, stepper_emulation::EmulatedStepper};
 use anchor::*;
 use control_law::PidGains;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, signal::Signal};
+use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
 
 pub struct CommandState {
     pub config_crc: Option<u32>,
@@ -22,7 +22,8 @@ impl CommandState {
 }
 
 pub struct CommandInterfaces<'ctx> {
-    pub pid_gains: &'ctx Signal<CriticalSectionRawMutex, PidGains>,
+    pub pid_gains: &'ctx Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
+    pub filter_coefs: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
     pub pid_setpoint: &'ctx portable_atomic::AtomicI32,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
     pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
