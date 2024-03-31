@@ -26,6 +26,7 @@ pub fn exit() -> ! {
 }
 const BOOTLOADER_FLAG_ADDR: u32 = 0x2000_6ffc; // 0 and max get clobbered at init
 const BOOTLOADER_FLAG_MAGIC: u32 = 0xf026_69ef;
+const BOOTLOADER_REBOOT_MAGIC: u32 = 0xfeeb_beef;
 const BOOTLOADER_ST_ADDR: u32 = 0x1fff_0000;
 
 pub fn reset_to_bootloader() -> ! {
@@ -38,17 +39,17 @@ pub fn reset_to_bootloader() -> ! {
 
 pub fn bootloader_check() {
     unsafe {
-        // chip needs a reset after a bootloader run to work correctly
-        let dirty_reg: u32;
-        asm!("mov {0}, r4", out(reg) dirty_reg);
-        if dirty_reg != 0 {
-            cortex_m::peripheral::SCB::sys_reset();
-        }
         if ptr::read(BOOTLOADER_FLAG_ADDR as *const u32) == BOOTLOADER_FLAG_MAGIC {
             ptr::write(BOOTLOADER_FLAG_ADDR as *mut u32, 0);
             let initial_sp = ptr::read(BOOTLOADER_ST_ADDR as *const u32);
             let start_addr = ptr::read((BOOTLOADER_ST_ADDR + 4) as *const u32);
             asm!("mov sp, {0}\nbx {1}", in(reg) initial_sp, in(reg) start_addr);
+        }
+        // always chip reset once on boot to fix bootloader re-enumeration
+        if ptr::read(BOOTLOADER_FLAG_ADDR as *const u32) != BOOTLOADER_REBOOT_MAGIC {
+            ptr::write(BOOTLOADER_FLAG_ADDR as *mut u32, BOOTLOADER_REBOOT_MAGIC);
+            asm!("nop");
+            cortex_m::peripheral::SCB::sys_reset();
         }
     }
 }
