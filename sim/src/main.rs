@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use control_law::ControllerTelemetry;
+use control_law::{Controller, ControllerTelemetry};
 use dimensioned::{f64prefixes::*, si::*, Dimensioned};
 use lib_klipper::{
     gcode::{parse_gcode, GCodeCommand, GCodeOperation},
@@ -72,7 +72,7 @@ impl Default for Plant {
         Plant {
             range: (0.0 * M, 100.0 * MILLI * M),
             encoder_scale: 600.0 * KILO * PM,
-            mass: 100.0 * MILLI * KG,
+            mass: 400.0 * MILLI * KG,
             gravity_accel: 9.80665 * MPS2,
 
             throttle: 0.0,
@@ -321,6 +321,7 @@ impl Simulator {
                 self.move_queue.velocity.value_unsafe as f32,
                 self.move_queue.acceleration.value_unsafe as f32,
                 self.system.current_position(),
+                1.0 / (self.controller_ticks_per_second.value_unsafe as f32),
             );
             self.system.set_input_throttle(output.output as f64);
             self.next_controller_update += 1.0 / self.controller_ticks_per_second;
@@ -339,13 +340,14 @@ impl Simulator {
 }
 
 fn main() {
+    let system = Plant::default();
     let mut sim = Simulator {
         ticks_per_second: 128000.0 * HZ,
         controller_ticks_per_second: 8000.0 * HZ,
 
         move_queue: ZMoveQueue::new(0.0 * MILLI * M),
-        controller: Default::default(),
-        system: Default::default(),
+        controller: Controller::new((system.mass.value_unsafe as f32) * 1000.0),
+        system,
         time: 0.0 * S,
         next_controller_update: 0.0 * S,
 
@@ -356,8 +358,9 @@ fn main() {
     sim.controller.update_gains(
         0,
         &control_law::PidGains {
-            p: 0.3,
-            p_max: 1.0,
+            limit: 60000.0,
+            p: 45.0,
+            p_max: 60000.0,
             i: 0.0,
             i_max: 1.0,
             d: 0.0,
@@ -367,14 +370,16 @@ fn main() {
     sim.controller.update_gains(
         1,
         &control_law::PidGains {
-            p: 0.4,
-            p_max: 1.0,
-            i: 0.0,
-            i_max: 1.0,
+            limit: 600.0,
+            p: 1800.0,
+            p_max: 600.0,
+            i: 1800.0,
+            i_max: 600.0,
             d: 0.0,
             d_max: 1.0,
         },
     );
+    sim.controller.update_filters(0, 0.5, 0.07);
 
     let mut writer = csv::Writer::from_path("/tmp/sim.csv").expect("CSV writer creation failed");
 
@@ -419,7 +424,7 @@ impl Serialize for Telemetry {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Telemetry", 11)?;
+        let mut s = serializer.serialize_struct("Telemetry", 15)?;
         s.serialize_field("time", &self.time.value_unsafe())?;
         s.serialize_field("setpoint", &(self.setpoint / MILLI).value_unsafe())?;
         s.serialize_field("position", &(self.position / MILLI).value_unsafe())?;
@@ -429,9 +434,13 @@ impl Serialize for Telemetry {
         s.serialize_field("pid_pos_p", &self.controller.pos_p)?;
         s.serialize_field("pid_pos_i", &self.controller.pos_i)?;
         s.serialize_field("pid_pos_d", &self.controller.pos_d)?;
+        s.serialize_field("pid_pos_out", &self.controller.pos_out)?;
         s.serialize_field("pid_vel_p", &self.controller.vel_p)?;
         s.serialize_field("pid_vel_i", &self.controller.vel_i)?;
         s.serialize_field("pid_vel_d", &self.controller.vel_d)?;
+        s.serialize_field("pid_vel_out", &self.controller.vel_out)?;
+        s.serialize_field("observer_p", &(self.controller.observer_p / 600.0))?;
+        s.serialize_field("observer_v", &(self.controller.observer_v / 600.0))?;
         s.end()
     }
 }
