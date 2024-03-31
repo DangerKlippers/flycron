@@ -138,7 +138,7 @@ pub fn set_next_step_dir(context: &mut CommandContext, oid: u8, dir: u8) {
     if context.state.stepper_oid.map_or(false, |o| o != oid) {
         return;
     }
-    context.state.stepper.set_next_dir(if dir == 0 {
+    context.state.stepper.set_next_dir(if dir == 1 {
         Direction::Forward
     } else {
         Direction::Backward

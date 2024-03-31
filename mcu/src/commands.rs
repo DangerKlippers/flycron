@@ -24,7 +24,6 @@ impl CommandState {
 pub struct CommandInterfaces<'ctx> {
     pub pid_gains: &'ctx Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
     pub filter_coefs: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
-    pub pid_setpoint: &'ctx portable_atomic::AtomicI32,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
     pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,
@@ -68,7 +67,7 @@ pub fn get_config(context: &CommandContext) {
         is_config: bool = crc.is_some(),
         crc: u32 = crc.unwrap_or(0),
         is_shutdown: bool = false,
-        move_count: u16 = 6000
+        move_count: u16 = 32
     );
 }
 

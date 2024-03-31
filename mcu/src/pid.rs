@@ -73,7 +73,6 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
         cx.shared
             .last_measured_position
             .store(current_position, portable_atomic::Ordering::SeqCst);
-        // TODO: Replace with sampling from stepper emulation at the current(or next?) time step
         //
         let (c0, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
         let target_position = if let Some((_, v0)) = c0 {
@@ -154,13 +153,6 @@ pub fn pid_set_coefs(context: &mut CommandContext, target: u32, alpha: u32, beta
     ));
 }
 
-#[klipper_command]
-pub fn pid_set_setpoint(context: &mut CommandContext, setpoint: u32) {
-    context
-        .interfaces
-        .pid_setpoint
-        .store(setpoint as i32, portable_atomic::Ordering::SeqCst);
-}
 #[klipper_command]
 pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
     defmt::info!("Setting pid enable to {}", enable);
