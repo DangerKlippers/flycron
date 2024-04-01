@@ -93,19 +93,21 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
 
         let v0 = match (c0, c1) {
             (Some((t0, p0)), Some((t1, p1))) => {
-                (p1.wrapping_sub(p0) as f32) / ((t1 - t0).ticks() as f32)
+                (((p1 as i32) - (p0 as i32)) as f32)
+                    / ((t1 - t0).ticks() as f32 / (CLOCK_FREQ as f32))
             }
             _ => 0.0,
         };
         let v1 = match (c1, c2) {
             (Some((t1, p1)), Some((t2, p2))) => {
-                (p2.wrapping_sub(p1) as f32) / ((t2 - t1).ticks() as f32) * (CLOCK_FREQ as f32)
+                (((p2 as i32) - (p1 as i32)) as f32)
+                    / ((t2 - t1).ticks() as f32 / (CLOCK_FREQ as f32))
             }
             _ => 0.0,
         };
         let a0 = match (v0, v1, c1, c2) {
             (v0, v1, Some((t1, _)), Some((t2, _))) => {
-                (v1 - v0) / ((t2 - t1).ticks() as f32) * (CLOCK_FREQ as f32)
+                (v1 - v0) / ((t2 - t1).ticks() as f32 / (CLOCK_FREQ as f32))
             }
             _ => 0.0,
         };
@@ -118,6 +120,7 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             1.0 / (PID_RATE as f32),
         );
         let throttle = output.output;
+        // defmt::info!("TELE {} {} {}", target_position, v0, a0);
 
         let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
         cx.shared
