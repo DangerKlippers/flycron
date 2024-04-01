@@ -89,6 +89,11 @@ pub fn allocate_oids(_count: u8) {}
 #[klipper_command]
 pub fn debug_nop() {}
 
+#[klipper_command]
+pub fn reset() {
+    cortex_m::peripheral::SCB::sys_reset();
+}
+
 #[klipper_constant]
 const MCU: &str = "flycron";
 
