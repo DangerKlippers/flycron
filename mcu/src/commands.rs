@@ -58,6 +58,7 @@ pub fn get_clock() {
 pub fn emergency_stop(context: &mut CommandContext) {
     klipper_shutdown!("Emergency stop", Clock::clock32());
     config_reset(context);
+    cortex_m::peripheral::SCB::sys_reset();
 }
 
 #[klipper_command]
