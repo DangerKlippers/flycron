@@ -1,7 +1,9 @@
 use crate::{clock::Clock, pid::PidTimeIterator, stepper_emulation::EmulatedStepper};
 use anchor::*;
 use control_law::PidGains;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel};
+use embassy_sync::{
+    blocking_mutex::raw::CriticalSectionRawMutex, channel::Channel, signal::Signal,
+};
 
 pub struct CommandState {
     pub config_crc: Option<u32>,
@@ -22,6 +24,7 @@ impl CommandState {
 }
 
 pub struct CommandInterfaces<'ctx> {
+    pub encoder_override: &'ctx Signal<CriticalSectionRawMutex, i32>,
     pub pid_gains: &'ctx Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
     pub filter_coefs: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
@@ -58,7 +61,10 @@ pub fn get_clock() {
 pub fn emergency_stop(context: &mut CommandContext) {
     klipper_shutdown!("Emergency stop", Clock::clock32());
     config_reset(context);
-    cortex_m::peripheral::SCB::sys_reset();
+    context
+        .interfaces
+        .pid_set_enable
+        .store(false, portable_atomic::Ordering::SeqCst);
 }
 
 #[klipper_command]

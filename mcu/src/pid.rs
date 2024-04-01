@@ -66,6 +66,16 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             controller.update_filters(target as usize, a, b);
         }
 
+        if cx.shared.encoder_override.signaled() {
+            let target = cx.shared.encoder_override.wait().await;
+            cx.shared.encoder.set_value(target);
+        }
+
+        let current_position = cx.shared.encoder.count();
+        cx.shared
+            .last_measured_position
+            .store(current_position, portable_atomic::Ordering::SeqCst);
+
         if !cx
             .shared
             .pid_set_enable
@@ -74,11 +84,6 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
             continue;
         }
-
-        let current_position = cx.shared.encoder.count();
-        cx.shared
-            .last_measured_position
-            .store(current_position, portable_atomic::Ordering::SeqCst);
 
         let (c0, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
         let target_position = if let Some((_, v0)) = c0 {
@@ -122,7 +127,7 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
         let throttle = output.output;
         // defmt::info!("TELE {} {} {}", target_position, v0, a0);
 
-        let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
+        let scaled_throttle = throttle.clamp(0.2, 1.0) * ThrottleCommand::MAX as f32;
         cx.shared
             .last_throttle
             .store(scaled_throttle, portable_atomic::Ordering::SeqCst);

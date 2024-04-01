@@ -114,6 +114,13 @@ class Flycron:
             self.cmd_FLYCRON_GET_POSITION,
             desc=self.cmd_FLYCRON_GET_POSITION_help,
         )
+        gcode.register_mux_command(
+            "FLYCRON_ENCODER_SET",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_ENCODER_SET,
+            desc=self.cmd_FLYCRON_ENCODER_SET_help,
+        )
 
     def _mcu_identify(self):
         self.pid_set_gains_cmd = self.mcu.lookup_command(
@@ -125,6 +132,9 @@ class Flycron:
         self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
         self.pid_dump_cmd = self.mcu.lookup_query_command(
             "pid_get_dump", "pid_dump throttle=%u"
+        )
+        self.encoder_set_position_cmd = self.mcu.lookup_command(
+            "encoder_set_position value=%u"
         )
 
     def _handle_connect(self):
@@ -194,6 +204,14 @@ class Flycron:
             )
             return
         gcmd.respond_error("Could not find stepper for controller")
+
+    cmd_FLYCRON_ENCODER_SET_help = """
+    Gets the current commanded and actual positions from a Flycron controller
+    """
+
+    def cmd_FLYCRON_ENCODER_SET(self, gcmd):
+        value = gcmd.get_int("POS")
+        self.encoder_set_position_cmd.send([value])
 
 
 def float_to_u32(v):

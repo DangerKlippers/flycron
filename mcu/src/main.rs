@@ -41,6 +41,7 @@ mod app {
     struct Shared {
         command_state: crate::commands::CommandState,
         encoder: Encoder<crate::hal::pac::TIM5>,
+        encoder_override: Signal<CriticalSectionRawMutex, i32>,
         last_measured_position: portable_atomic::AtomicI32,
         last_commanded_position: portable_atomic::AtomicI32,
         last_throttle: portable_atomic::AtomicF32,
@@ -142,6 +143,7 @@ mod app {
             Shared {
                 command_state,
                 encoder,
+                encoder_override: Signal::new(),
                 last_measured_position: portable_atomic::AtomicI32::new(0),
                 last_commanded_position: portable_atomic::AtomicI32::new(0),
                 last_throttle: portable_atomic::AtomicF32::new(0.0),
@@ -172,6 +174,7 @@ mod app {
         local = [usb_dev],
         shared = [
             command_state,
+            &encoder_override,
             &last_measured_position,
             &last_commanded_position,
             &last_throttle,
@@ -185,6 +188,7 @@ mod app {
                 cx.local.usb_dev.handle_commands(CommandContext {
                     state: cs,
                     interfaces: CommandInterfaces {
+                        encoder_override: cx.shared.encoder_override,
                         pid_gains: cx.shared.pid_gains,
                         filter_coefs: cx.shared.filter_coefs,
                         pid_set_enable: cx.shared.pid_set_enable,
@@ -253,6 +257,7 @@ mod app {
         priority = 7,
         shared = [
             &encoder,
+            &encoder_override,
             &last_measured_position,
             &last_commanded_position,
             &last_throttle,
