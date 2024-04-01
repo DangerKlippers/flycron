@@ -168,7 +168,7 @@ class Flycron:
 
     def cmd_FLYCRON_SETFILTER(self, gcmd):
         self.obs_alpha = gcmd.get_float("ALPHA", self.obs_alpha)
-        self.obs_beta = gcmd.get_float("ALPHA", self.obs_beta)
+        self.obs_beta = gcmd.get_float("BETA", self.obs_beta)
         self._apply()
 
     cmd_FLYCRON_SETPOINT_help = """
