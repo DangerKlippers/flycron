@@ -26,7 +26,7 @@ class PidParams:
     def apply(self, cmd):
         cmd.send(
             [
-                0,
+                self.index,
                 float_to_u32(self.limit),
                 float_to_u32(self.p),
                 float_to_u32(self.p_limit),
@@ -64,7 +64,7 @@ class Flycron:
             {
                 "limit": 60000.0,
                 "p": 45.0,
-                "p_max": 60000.0,
+                "p_limit": 60000.0,
             },
         )
         self.pid_pos.load(config)
@@ -74,9 +74,9 @@ class Flycron:
             {
                 "limit": 600.0,
                 "p": 1800.0,
-                "p_max": 600.0,
+                "p_limit": 600.0,
                 "i": 1800.0,
-                "i_max": 600.0,
+                "i_limit": 600.0,
             },
         )
         self.pid_vel.load(config)
@@ -123,6 +123,9 @@ class Flycron:
             "pid_set_coefs target=%u alpha=%u beta=%u"
         )
         self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
+        self.pid_dump_cmd = self.mcu.lookup_query_command(
+            "pid_get_dump", "pid_dump throttle=%u"
+        )
 
     def _handle_connect(self):
         self._apply()
@@ -184,14 +187,22 @@ class Flycron:
                 "stepper_commanded_position oid=%c pos=%i",
                 oid=oid,
             ).send([oid])["pos"]
+            throttle = u32_to_float(self.pid_dump_cmd.send([])["throttle"])
 
-            gcmd.respond_info(f"Actual {pos}, commanded {commanded_pos}")
+            gcmd.respond_info(
+                f"Actual {pos}, commanded {commanded_pos}, throttle {throttle}"
+            )
             return
         gcmd.respond_error("Could not find stepper for controller")
 
 
 def float_to_u32(v):
     x = struct.unpack("I", struct.pack("f", float(v)))[0]
+    return x
+
+
+def u32_to_float(v):
+    x = struct.unpack("f", struct.pack("I", v))[0]
     return x
 
 

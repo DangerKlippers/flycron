@@ -1,10 +1,12 @@
-use crate::{commands::CommandContext, dshot::ThrottleCommand};
+use crate::{
+    clock::{Clock, Duration, Instant, CLOCK_FREQ},
+    commands::CommandContext,
+    dshot::ThrottleCommand,
+};
 use anchor::*;
+use control_law::PidGains;
 use core::mem::transmute_copy;
 use fugit::HertzU64;
-
-use crate::clock::{Clock, Duration, Instant};
-use control_law::PidGains;
 
 pub const PID_RATE: u64 = 1000;
 pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(PID_RATE));
@@ -53,7 +55,17 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
     let mut last_pos = 0u32;
     loop {
         let next_time = ticks.next();
+
         Clock::delay_until(next_time).await;
+        if let Ok((target, gains)) = cx.shared.pid_gains.try_receive() {
+            defmt::info!("update gains {} {}", target, gains);
+            controller.update_gains(target as usize, &gains);
+        }
+        if let Ok((target, a, b)) = cx.shared.filter_coefs.try_receive() {
+            defmt::info!("update filter {} {} {}", target, a, b);
+            controller.update_filters(target as usize, a, b);
+        }
+
         if !cx
             .shared
             .pid_set_enable
@@ -62,18 +74,12 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
             continue;
         }
-        if let Ok((target, gains)) = cx.shared.pid_gains.try_receive() {
-            controller.update_gains(target as usize, &gains);
-        }
-        if let Ok((target, a, b)) = cx.shared.filter_coefs.try_receive() {
-            controller.update_filters(target as usize, a, b);
-        }
 
         let current_position = cx.shared.encoder.count();
         cx.shared
             .last_measured_position
             .store(current_position, portable_atomic::Ordering::SeqCst);
-        //
+
         let (c0, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
         let target_position = if let Some((_, v0)) = c0 {
             last_pos = v0;
@@ -93,27 +99,31 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
         };
         let v1 = match (c1, c2) {
             (Some((t1, p1)), Some((t2, p2))) => {
-                (p2.wrapping_sub(p1) as f32) / ((t2 - t1).ticks() as f32)
+                (p2.wrapping_sub(p1) as f32) / ((t2 - t1).ticks() as f32) * (CLOCK_FREQ as f32)
             }
             _ => 0.0,
         };
         let a0 = match (v0, v1, c1, c2) {
-            (v0, v1, Some((t1, _)), Some((t2, _))) => (v1 - v0) / ((t2 - t1).ticks() as f32),
+            (v0, v1, Some((t1, _)), Some((t2, _))) => {
+                (v1 - v0) / ((t2 - t1).ticks() as f32) * (CLOCK_FREQ as f32)
+            }
             _ => 0.0,
         };
 
-        let throttle = controller
-            .update(
-                target_position,
-                v0,
-                a0,
-                current_position,
-                1.0 / (PID_RATE as f32),
-            )
-            .output;
+        let output = controller.update(
+            target_position,
+            v0,
+            a0,
+            current_position,
+            1.0 / (PID_RATE as f32),
+        );
+        let throttle = output.output;
 
         let scaled_throttle = throttle.clamp(0.0, 1.0) * ThrottleCommand::MAX as f32;
-        // defmt::info!("Throttle: {}", scaled_throttle as u16);
+        cx.shared
+            .last_throttle
+            .store(scaled_throttle, portable_atomic::Ordering::SeqCst);
+
         cx.shared
             .dshot_throttle
             .signal(ThrottleCommand::Throttle(scaled_throttle as u16));
@@ -163,5 +173,15 @@ pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
         .store(value, portable_atomic::Ordering::SeqCst);
 }
 
-#[cfg(test)]
-mod test {}
+#[klipper_command]
+pub fn pid_get_dump(context: &mut CommandContext) {
+    let throttle = unsafe {
+        transmute_copy(
+            &context
+                .interfaces
+                .pid_last_throttle
+                .load(portable_atomic::Ordering::SeqCst),
+        )
+    };
+    klipper_reply!(pid_dump, throttle: u32 = throttle);
+}

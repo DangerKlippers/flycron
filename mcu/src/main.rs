@@ -43,6 +43,7 @@ mod app {
         encoder: Encoder<crate::hal::pac::TIM5>,
         last_measured_position: portable_atomic::AtomicI32,
         last_commanded_position: portable_atomic::AtomicI32,
+        last_throttle: portable_atomic::AtomicF32,
         target_queue: TargetQueue,
 
         dshot_throttle: Signal<CriticalSectionRawMutex, ThrottleCommand>,
@@ -143,6 +144,7 @@ mod app {
                 encoder,
                 last_measured_position: portable_atomic::AtomicI32::new(0),
                 last_commanded_position: portable_atomic::AtomicI32::new(0),
+                last_throttle: portable_atomic::AtomicF32::new(0.0),
                 target_queue: TargetQueue::new(),
 
                 dshot_throttle: Signal::new(),
@@ -151,7 +153,7 @@ mod app {
 
                 pid_gains: Channel::new(),
                 filter_coefs: Channel::new(),
-                pid_set_enable: portable_atomic::AtomicBool::new(true),
+                pid_set_enable: portable_atomic::AtomicBool::new(false),
             },
             Local { usb_dev },
         )
@@ -172,6 +174,7 @@ mod app {
             command_state,
             &last_measured_position,
             &last_commanded_position,
+            &last_throttle,
             &pid_gains,
             &filter_coefs,
             &pid_set_enable,
@@ -187,6 +190,7 @@ mod app {
                         pid_set_enable: cx.shared.pid_set_enable,
                         pid_last_measured_position: cx.shared.last_measured_position,
                         pid_last_commanded_position: cx.shared.last_commanded_position,
+                        pid_last_throttle: cx.shared.last_throttle,
                     },
                 })
             });
@@ -251,6 +255,7 @@ mod app {
             &encoder,
             &last_measured_position,
             &last_commanded_position,
+            &last_throttle,
             &target_queue,
             &dshot_throttle,
             &pid_gains,

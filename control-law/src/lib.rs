@@ -56,7 +56,7 @@ impl Observer {
     }
 }
 
-#[derive(Default, Debug)]
+#[derive(Default, Debug, defmt::Format)]
 pub struct PidGains {
     pub limit: f32,
     pub p: f32,
@@ -67,7 +67,7 @@ pub struct PidGains {
     pub d_max: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, defmt::Format)]
 pub struct Output {
     pub output: f32,
     #[cfg(feature = "telemetry")]
@@ -75,7 +75,7 @@ pub struct Output {
 }
 
 #[cfg(feature = "telemetry")]
-#[derive(Debug, Default)]
+#[derive(Default, Debug, defmt::Format)]
 pub struct ControllerTelemetry {
     pub pos_p: f32,
     pub pos_i: f32,

@@ -11,7 +11,7 @@ use rtic_monotonics::{InterruptToken, Monotonic, TimeoutError, TimerQueue};
 static HALF_PERIOD_COUNTER: AtomicU32 = AtomicU32::new(0);
 
 #[klipper_constant]
-const CLOCK_FREQ: u32 = 96_000_000;
+pub const CLOCK_FREQ: u32 = 96_000_000;
 
 pub struct Clock;
 

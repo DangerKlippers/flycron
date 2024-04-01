@@ -27,6 +27,7 @@ pub struct CommandInterfaces<'ctx> {
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
     pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,
+    pub pid_last_throttle: &'ctx portable_atomic::AtomicF32,
 }
 
 pub struct CommandContext<'ctx> {
