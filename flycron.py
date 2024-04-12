@@ -107,11 +107,11 @@ class Flycron:
             desc=self.cmd_FLYCRON_SETFILTER_help,
         )
         gcode.register_mux_command(
-            "FLYCRON_SETENABLE",
+            "FLYCRON_SETSLEW",
             "MCU",
             self.name,
-            self.cmd_FLYCRON_SETENABLE,
-            desc=self.cmd_FLYCRON_SETPOINT_help,
+            self.cmd_FLYCRON_SETSLEW,
+            desc=self.cmd_FLYCRON_SETSLEW_help,
         )
         gcode.register_mux_command(
             "FLYCRON_GET_POSITION",
@@ -205,15 +205,14 @@ class Flycron:
     Sets the setpoint of a Flycron controller
     """
 
+    cmd_FLYCRON_SETSLEW_help = """
+    Sets the slew rate limits of the final throttle output
+    """
+
     def cmd_FLYCRON_SETSLEW(self, gcmd):
         self.slew_limit_rising = gcmd.get_float("RISING", self.slew_limit_rising)
         self.slew_limit_falling = gcmd.get_float("FALLING", self.slew_limit_falling)
         self._apply()
-
-    def cmd_FLYCRON_SETENABLE(self, gcmd):
-        enable_int = gcmd.get_int("ENABLE")
-        enable = enable_int > 0
-        self.pid_enable_cmd.send([enable])
 
     cmd_FLYCRON_GET_POSITION_help = """
     Gets the current commanded and actual positions from a Flycron controller
