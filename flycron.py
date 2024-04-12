@@ -65,9 +65,9 @@ class Flycron:
             0,
             "pos",
             {
-                "limit": 60000.0,
+                "limit": 240000.0,
                 "p": 45.0,
-                "p_limit": 60000.0,
+                "p_limit": 240000.0,
             },
         )
         self.pid_pos.load(config)
@@ -75,11 +75,11 @@ class Flycron:
             1,
             "vel",
             {
-                "limit": 600.0,
+                "limit": 2400.0,
                 "p": 1800.0,
-                "p_limit": 600.0,
+                "p_limit": 2400.0,
                 "i": 1800.0,
-                "i_limit": 600.0,
+                "i_limit": 2400.0,
             },
         )
         self.pid_vel.load(config)
