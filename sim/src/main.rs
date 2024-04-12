@@ -71,7 +71,7 @@ impl Default for Plant {
     fn default() -> Self {
         Plant {
             range: (0.0 * M, 100.0 * MILLI * M),
-            encoder_scale: 600.0 * KILO * PM,
+            encoder_scale: 2400.0 * KILO * PM,
             mass: 400.0 * MILLI * KG,
             gravity_accel: 9.80665 * MPS2,
 
@@ -358,9 +358,9 @@ fn main() {
     sim.controller.update_gains(
         0,
         &control_law::PidGains {
-            limit: 60000.0,
-            p: 45.0,
-            p_max: 60000.0,
+            limit: 240000.0,
+            p: 12.0,
+            p_max: 240000.0,
             i: 0.0,
             i_max: 1.0,
             d: 0.0,
@@ -370,16 +370,21 @@ fn main() {
     sim.controller.update_gains(
         1,
         &control_law::PidGains {
-            limit: 600.0,
-            p: 1800.0,
-            p_max: 600.0,
-            i: 1800.0,
+            limit: 2400.0,
+            p: 450.0,
+            p_max: 2400.0,
+            i: 450.0,
             i_max: 600.0,
             d: 0.0,
             d_max: 1.0,
         },
     );
     sim.controller.update_filters(0, 0.5, 0.07);
+
+    sim.controller
+        .update_slew_rate(1, 1000.0, f32::NEG_INFINITY);
+    sim.controller
+        .update_slew_rate(2, 1000.0, f32::NEG_INFINITY);
 
     let mut writer = csv::Writer::from_path("/tmp/sim.csv").expect("CSV writer creation failed");
 
@@ -424,13 +429,14 @@ impl Serialize for Telemetry {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("Telemetry", 15)?;
+        let mut s = serializer.serialize_struct("Telemetry", 16)?;
         s.serialize_field("time", &self.time.value_unsafe())?;
         s.serialize_field("setpoint", &(self.setpoint / MILLI).value_unsafe())?;
         s.serialize_field("position", &(self.position / MILLI).value_unsafe())?;
         s.serialize_field("velocity", &(self.velocity / MILLI).value_unsafe())?;
         s.serialize_field("accel", &(self.accel).value_unsafe())?;
         s.serialize_field("throttle", &self.throttle)?;
+        s.serialize_field("throttle_raw", &self.controller.raw_output)?;
         s.serialize_field("pid_pos_p", &self.controller.pos_p)?;
         s.serialize_field("pid_pos_i", &self.controller.pos_i)?;
         s.serialize_field("pid_pos_d", &self.controller.pos_d)?;
@@ -439,8 +445,8 @@ impl Serialize for Telemetry {
         s.serialize_field("pid_vel_i", &self.controller.vel_i)?;
         s.serialize_field("pid_vel_d", &self.controller.vel_d)?;
         s.serialize_field("pid_vel_out", &self.controller.vel_out)?;
-        s.serialize_field("observer_p", &(self.controller.observer_p / 600.0))?;
-        s.serialize_field("observer_v", &(self.controller.observer_v / 600.0))?;
+        s.serialize_field("observer_p", &(self.controller.observer_p / 2400.0))?;
+        s.serialize_field("observer_v", &(self.controller.observer_v / 2400.0))?;
         s.end()
     }
 }

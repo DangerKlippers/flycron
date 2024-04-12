@@ -47,6 +47,25 @@ class PidParams:
         self.d_limit = gcmd.get_float("D_LIMIT", self.d_limit)
 
 
+class SlewrateLimit:
+    def __init__(self, index, prefix, defaults):
+        self.index = index
+        self.prefix = prefix
+        self.rising = defaults.get("rising", 3.40282347e38)
+        self.falling = defaults.get("falling", -3.40282347e38)
+
+    def load(self, config):
+        self.rising = config.getfloat(f"slewrate_{self.prefix}_rising", self.rising)
+        self.falling = config.getfloat(f"slewrate_{self.prefix}_falling", self.falling)
+
+    def apply(self, cmd):
+        cmd.send([self.index, float_to_u32(self.rising), float_to_u32(self.falling)])
+
+    def gcmd_setslew(self, gcmd):
+        self.rising = gcmd.get_float("RISING", self.rising)
+        self.falling = gcmd.get_float("FALLING", self.falling)
+
+
 class Flycron:
     def __init__(self, config, name):
         self.printer = config.get_printer()
@@ -87,8 +106,10 @@ class Flycron:
         self.obs_alpha = config.getfloat("obs_alpha", 0.8)
         self.obs_beta = config.getfloat("obs_beta", 0.07)
 
-        self.slew_limit_rising = config.getfloat("slew_limit_rising", 3.40282347e38)
-        self.slew_limit_falling = config.getfloat("slew_limit_falling", -3.40282347e38)
+        self.slew_limit_velocity = SlewrateLimit(1, "vel", {})
+        self.slew_limit_velocity.load(config)
+        self.slew_limit_throttle = SlewrateLimit(2, "throttle", {})
+        self.slew_limit_throttle.load(config)
 
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
@@ -165,13 +186,8 @@ class Flycron:
         self.pid_set_coefs_cmd.send(
             [0, float_to_u32(self.obs_alpha), float_to_u32(self.obs_beta)]
         )
-        self.pid_set_slew_limits.send(
-            [
-                2,
-                float_to_u32(self.slew_limit_rising),
-                float_to_u32(self.slew_limit_falling),
-            ]
-        )
+        self.slew_limit_velocity.apply(self.pid_set_slew_limits)
+        self.slew_limit_throttle.apply(self.pid_set_slew_limits)
         self.pid_set_mass.send([float_to_u32(self.mass)])
 
     def get_stepper(self):
@@ -216,8 +232,14 @@ class Flycron:
     """
 
     def cmd_FLYCRON_SETSLEW(self, gcmd):
-        self.slew_limit_rising = gcmd.get_float("RISING", self.slew_limit_rising)
-        self.slew_limit_falling = gcmd.get_float("FALLING", self.slew_limit_falling)
+        target = gcmd.get("TARGET")
+        if target == "vel":
+            self.slew_limit_velocity.gcmd_setslew(gcmd)
+        elif target == "throttle":
+            self.slew_limit_throttle.gcmd_setslew(gcmd)
+        else:
+            gcmd.respond_error("Unknown slew limit target")
+            return
         self._apply()
 
     cmd_FLYCRON_GET_POSITION_help = """

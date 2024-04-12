@@ -12,13 +12,14 @@ df["observer_p"].plot(ax=ax_l, style=":")
 
 ax_r = ax_l.twinx()
 
-df["velocity"].plot(ax=ax_r)
-df["observer_v"].plot(ax=ax_r, style=":")
+# df["velocity"].plot(ax=ax_r)
+# df["observer_v"].plot(ax=ax_r, style=":")
 
 
 # df["pid_pos_out"].plot(ax=ax_r)
 # df["pid_vel_out"].plot(ax=ax_r, secondary_y=True)
-# df["throttle"].plot(ax=ax_r, secondary_y=True)
+df["throttle"].plot(ax=ax_r)
+# df["throttle_raw"].plot(ax=ax_r)
 # df[["pid_vel_p", "pid_vel_i", "pid_vel_d"]].plot(ax=ax_r, secondary_y=True)
 
 ax_l.legend()

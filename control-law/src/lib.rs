@@ -10,7 +10,8 @@ pub struct Controller {
     pid_vel: Pid<f32>,
     observer: Observer,
     mass_grams: f32,
-    slew_limiter: SlewLimiter,
+    slew_limiter_velocity: SlewLimiter,
+    slew_limiter_throttle: SlewLimiter,
 }
 
 impl Controller {
@@ -20,7 +21,8 @@ impl Controller {
             pid_vel: Pid::new(0.0f32, 1.0),
             observer: Observer::new(1.0, 1.0),
             mass_grams,
-            slew_limiter: SlewLimiter::default(),
+            slew_limiter_velocity: SlewLimiter::default(),
+            slew_limiter_throttle: SlewLimiter::default(),
         }
     }
 }
@@ -117,9 +119,9 @@ impl Controller {
     }
 
     pub fn update_slew_rate(&mut self, loop_idx: usize, limit_rising: f32, limit_falling: f32) {
-        // For now only support slew limiting throttle output
         let limiter = match loop_idx {
-            2 => &mut self.slew_limiter,
+            1 => &mut self.slew_limiter_velocity,
+            2 => &mut self.slew_limiter_throttle,
             _ => return,
         };
         limiter.limit_rising = limit_rising;
@@ -169,7 +171,7 @@ impl Controller {
         };
 
         Output {
-            output: self.slew_limiter.update(output, dt),
+            output: self.slew_limiter_throttle.update(output, dt),
             #[cfg(feature = "telemetry")]
             telemetry,
         }
