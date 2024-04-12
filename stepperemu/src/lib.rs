@@ -2,10 +2,10 @@
 
 use heapless::Deque;
 
-pub type Instant = fugit::Instant<u64, 1, 96_000_000>;
-pub type Duration = fugit::Duration<u64, 1, 96_000_000>;
+pub type Instant = fugit::Instant<u32, 1, 96_000_000>;
+pub type Duration = fugit::Duration<u32, 1, 96_000_000>;
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Debug, defmt::Format, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Direction {
     Forward,
     Backward,
@@ -17,9 +17,9 @@ struct State {
     position: u32,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, defmt::Format)]
 #[repr(C)]
-struct Move {
+pub struct Move {
     interval: u32,
     count: u16,
     add: i16,
@@ -37,7 +37,7 @@ impl Move {
         }
         let base = (steps as u64) * (self.interval as u64);
         let accel = (self.add as i32) * (steps as i32 - 1) * (steps as i32) / 2;
-        Duration::from_ticks(base.wrapping_add(accel as u64))
+        Duration::from_ticks(base.wrapping_add(accel as u64) as u32)
     }
 
     fn steps_before_time(&self, target: Duration) -> u16 {
@@ -73,9 +73,22 @@ impl Move {
 impl State {
     /// Advances the state by the given move, up to maximum time u32
     fn advance(&mut self, cmd: &Move, up_to_time: Instant) -> AdvanceResult {
+        let next_step = Instant::from_ticks(self.last_step.ticks().wrapping_add(cmd.interval));
+        if next_step > up_to_time {
+            return AdvanceResult::FutureMove;
+        }
+        // If the next step is within our window, consume one step
+        self.step(cmd.direction, 1);
+        self.last_step = next_step;
+        let cmd = cmd.advance(1);
+        if cmd.count == 0 {
+            return AdvanceResult::Consumed; // We consumed the entire thing.
+        }
+
+        // Now see if we can apply more steps
         let available_time = match up_to_time.checked_duration_since(self.last_step) {
             Some(t) => t,
-            None => return AdvanceResult::FutureMove,
+            None => return AdvanceResult::Partial(cmd),
         };
 
         let total_time = cmd.total_time();
@@ -88,7 +101,7 @@ impl State {
 
         let steps_before = cmd.steps_before_time(available_time);
         if steps_before == 0 {
-            return AdvanceResult::Partial(*cmd); // Fast path: nothing can be applied
+            return AdvanceResult::Partial(cmd); // Fast path: nothing can be applied
         }
         // Slow path: apply the time and number of steps before `steps_before` and return the
         // remaining move.
@@ -106,7 +119,7 @@ impl State {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, defmt::Format, Copy, Clone)]
 enum AdvanceResult {
     FutureMove,
     Consumed,
@@ -126,12 +139,13 @@ pub trait Callbacks {
 
 #[derive(Debug)]
 pub struct EmulatedStepper<T> {
-    queue: heapless::Deque<Move, 32>,
+    queue: heapless::Deque<Move, 128>,
     current_move: Option<Move>,
     next_direction: Direction,
     state: State,
     target_time: T,
     callback_state: CallbackState,
+    reset_target: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -148,9 +162,9 @@ impl CallbackState {
 
     fn update(&mut self, position: u32, callbacks: &mut impl Callbacks) {
         let pos = position;
-        // if pos != self.last_append.1 {
-        callbacks.update_last(self.last_append.0, pos);
-        // }
+        if pos != self.last_append.1 {
+            callbacks.update_last(self.last_append.0, pos);
+        }
     }
 
     fn emit(&mut self, next_time: Instant, position: u32, callbacks: &mut impl Callbacks) {
@@ -181,6 +195,7 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
                 last_append: (Instant::from_ticks(0), 0),
                 incomplete: true,
             },
+            reset_target: None,
         }
     }
 
@@ -188,7 +203,20 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
         self.state.last_step = time;
     }
 
+    pub fn current_position(&self) -> i32 {
+        self.state.position as i32
+    }
+
+    pub fn reset_target(&mut self, new_target: u32) {
+        self.reset_target = Some(new_target);
+    }
+
     pub fn advance(&mut self, callbacks: &mut impl Callbacks) {
+        if let Some(reset_target) = self.reset_target.take() {
+            self.state.position = reset_target;
+            self.callback_state
+                .emit(self.target_time.next(), reset_target, callbacks);
+        }
         while self.callback_state.can_append(callbacks) {
             let cmd = match self.current_move.as_mut() {
                 None => match self.queue.pop_front() {
@@ -205,7 +233,7 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
             let mut next_time = self.target_time.next();
             while cmd.count != 0 && self.callback_state.can_append(callbacks) {
                 // Apply current command up to the next tick
-                match self.state.advance(&cmd, next_time) {
+                match self.state.advance(cmd, next_time) {
                     // Command was fully consumed, last_step was left <= next_time
                     AdvanceResult::Consumed => {
                         self.callback_state
@@ -289,11 +317,11 @@ mod tests {
         }
     }
 
-    pub fn count_ticks(interval: u32, count: u16, add: i16) -> u64 {
-        let mut total = 0u64;
+    pub fn count_ticks(interval: u32, count: u16, add: i16) -> u32 {
+        let mut total = 0u32;
         let mut interval = interval;
         for _ in 0..count {
-            total += interval as u64;
+            total = total.wrapping_add(interval);
             interval = interval.wrapping_add(add as i32 as u32);
         }
         total
@@ -355,9 +383,6 @@ mod tests {
             Duration::from_ticks(12000),
             Instant::from_ticks(0),
         ));
-
-        s.target_time.set_time(Instant::from_ticks(6000));
-        s.target_time.set_time(Instant::from_ticks(0));
 
         let first_step = Instant::from_ticks(6000);
         s.reset_clock(first_step);

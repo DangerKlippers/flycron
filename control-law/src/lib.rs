@@ -10,6 +10,7 @@ pub struct Controller {
     pid_vel: Pid<f32>,
     observer: Observer,
     mass_grams: f32,
+    slew_limiter: SlewLimiter,
 }
 
 impl Controller {
@@ -19,6 +20,7 @@ impl Controller {
             pid_vel: Pid::new(0.0f32, 1.0),
             observer: Observer::new(1.0, 1.0),
             mass_grams,
+            slew_limiter: SlewLimiter::default(),
         }
     }
 }
@@ -88,6 +90,8 @@ pub struct ControllerTelemetry {
 
     pub observer_p: f32,
     pub observer_v: f32,
+
+    pub raw_output: f32,
 }
 
 impl Controller {
@@ -110,6 +114,20 @@ impl Controller {
         };
         filter.alpha = alpha;
         filter.beta = beta;
+    }
+
+    pub fn update_slew_rate(&mut self, loop_idx: usize, limit_rising: f32, limit_falling: f32) {
+        // For now only support slew limiting throttle output
+        let limiter = match loop_idx {
+            2 => &mut self.slew_limiter,
+            _ => return,
+        };
+        limiter.limit_rising = limit_rising;
+        limiter.limit_falling = limit_falling;
+    }
+
+    pub fn set_mass(&mut self, mass_grams: f32) {
+        self.mass_grams = mass_grams;
     }
 
     pub fn update(
@@ -147,10 +165,11 @@ impl Controller {
             vel_out: pid_vel_out.output,
             observer_p: p_est,
             observer_v: v_est,
+            raw_output: output,
         };
 
         Output {
-            output,
+            output: self.slew_limiter.update(output, dt),
             #[cfg(feature = "telemetry")]
             telemetry,
         }
@@ -165,9 +184,9 @@ impl Controller {
     }
 
     pub fn thrust_throttle_raw(&self, target_thrust: f32) -> f32 {
-        let a = 836.0;
-        let b = 102.0;
-        let c = -7.6 - target_thrust;
+        let a = 427.0;
+        let b = -22.1;
+        let c = 3.56 - target_thrust;
         let discriminant: f32 = b * b - 4.0 * a * c;
         if discriminant > 0.0 {
             let sqrt_discriminant = discriminant.sqrt();
@@ -179,5 +198,38 @@ impl Controller {
         } else {
             0.0
         }
+    }
+}
+
+#[derive(Debug)]
+struct SlewLimiter {
+    limit_rising: f32,
+    limit_falling: f32,
+    last_value: Option<f32>,
+}
+
+impl Default for SlewLimiter {
+    fn default() -> Self {
+        Self {
+            limit_rising: f32::INFINITY,
+            limit_falling: f32::NEG_INFINITY,
+            last_value: None,
+        }
+    }
+}
+
+impl SlewLimiter {
+    fn update(&mut self, value: f32, dt: f32) -> f32 {
+        let last_value = self.last_value.unwrap_or(value);
+        let rate = (value - last_value) / dt;
+        let value = if rate > self.limit_rising {
+            last_value + dt * self.limit_rising
+        } else if rate < self.limit_falling {
+            last_value - dt * self.limit_falling
+        } else {
+            value
+        };
+        self.last_value = Some(value);
+        value
     }
 }

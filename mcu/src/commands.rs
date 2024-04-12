@@ -1,4 +1,8 @@
-use crate::{clock::Clock, pid::PidTimeIterator, stepper_emulation::EmulatedStepper};
+use crate::{
+    clock::Clock,
+    pid::PidTimeIterator,
+    stepper_emulation::{EmulatedStepper, TargetQueue},
+};
 use anchor::*;
 use control_law::PidGains;
 use embassy_sync::{
@@ -10,6 +14,7 @@ pub struct CommandState {
 
     pub stepper_oid: Option<u8>,
     pub stepper: EmulatedStepper,
+    pub stepper_enable_oid: Option<u8>,
 }
 
 impl CommandState {
@@ -19,6 +24,7 @@ impl CommandState {
 
             stepper_oid: None,
             stepper: EmulatedStepper::new(PidTimeIterator::new()),
+            stepper_enable_oid: None,
         }
     }
 }
@@ -27,10 +33,12 @@ pub struct CommandInterfaces<'ctx> {
     pub encoder_override: &'ctx Signal<CriticalSectionRawMutex, i32>,
     pub pid_gains: &'ctx Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
     pub filter_coefs: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
+    pub slew_rate_limits: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
     pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_throttle: &'ctx portable_atomic::AtomicF32,
+    pub target_queue: &'ctx TargetQueue,
 }
 
 pub struct CommandContext<'ctx> {
@@ -69,20 +77,23 @@ pub fn emergency_stop(context: &mut CommandContext) {
 
 #[klipper_command]
 pub fn get_config(context: &CommandContext) {
+    defmt::info!("get cfg");
     let crc = context.state.config_crc;
     klipper_reply!(
         config,
         is_config: bool = crc.is_some(),
         crc: u32 = crc.unwrap_or(0),
         is_shutdown: bool = false,
-        move_count: u16 = 32
+        move_count: u16 = 128
     );
 }
 
 #[klipper_command]
 pub fn config_reset(context: &mut CommandContext) {
+    defmt::info!("config reset");
     context.state.config_crc = None;
     context.state.stepper_oid = None;
+    context.state.stepper = EmulatedStepper::new(PidTimeIterator::new());
 }
 
 #[klipper_command]

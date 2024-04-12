@@ -57,6 +57,7 @@ class Flycron:
         self.mcu = ppins.chips.get(mcu_name, None)
         if self.mcu is None:
             raise config.error(f"unknown MCU '{mcu_name}'")
+        self._stepper = None
 
         self.pid_pos = PidParams(
             0,
@@ -80,11 +81,16 @@ class Flycron:
             },
         )
         self.pid_vel.load(config)
+
         self.obs_alpha = config.getfloat("obs_alpha", 0.8)
         self.obs_beta = config.getfloat("obs_beta", 0.07)
 
+        self.slew_limit_rising = config.getfloat("slew_limit_rising", float("inf"))
+        self.slew_limit_falling = config.getfloat("slew_limit_falling", float("-inf"))
+
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
+        self.printer.register_event_handler("stepper_enable:motor_off", self._motor_off)
         gcode = self.printer.lookup_object("gcode")
         gcode.register_mux_command(
             "FLYCRON_SETPID",
@@ -129,6 +135,9 @@ class Flycron:
         self.pid_set_coefs_cmd = self.mcu.lookup_command(
             "pid_set_coefs target=%u alpha=%u beta=%u"
         )
+        self.pid_set_slew_limits = self.mcu.lookup_command(
+            "pid_set_slew_limits target=%u limit_rising=%u limit_falling=%u",
+        )
         self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
         self.pid_dump_cmd = self.mcu.lookup_query_command(
             "pid_get_dump", "pid_dump throttle=%u"
@@ -140,12 +149,33 @@ class Flycron:
     def _handle_connect(self):
         self._apply()
 
+    def _motor_off(self, print_time):
+        stepper = self.get_stepper()
+        if stepper is not None:
+            stepper._query_mcu_position()
+
     def _apply(self):
         self.pid_pos.apply(self.pid_set_gains_cmd)
         self.pid_vel.apply(self.pid_set_gains_cmd)
         self.pid_set_coefs_cmd.send(
             [0, float_to_u32(self.obs_alpha), float_to_u32(self.obs_beta)]
         )
+        self.pid_set_slew_limits.send(
+            [
+                2,
+                float_to_u32(self.slew_limit_rising),
+                float_to_u32(self.slew_limit_falling),
+            ]
+        )
+
+    def get_stepper(self):
+        if self._stepper is None:
+            steppers = self.printer.lookup_object("force_move").steppers
+            for stepper in steppers.values():
+                if stepper.get_mcu() == self.mcu:
+                    self._stepper = stepper
+                    break
+        return self._stepper
 
     cmd_FLYCRON_SETPID_help = """
     Sets PID parameters for the controller
@@ -175,6 +205,11 @@ class Flycron:
     Sets the setpoint of a Flycron controller
     """
 
+    def cmd_FLYCRON_SETSLEW(self, gcmd):
+        self.slew_limit_rising = gcmd.get_float("RISING", self.slew_limit_rising)
+        self.slew_limit_falling = gcmd.get_float("FALLING", self.slew_limit_falling)
+        self._apply()
+
     def cmd_FLYCRON_SETENABLE(self, gcmd):
         enable_int = gcmd.get_int("ENABLE")
         enable = enable_int > 0
@@ -185,25 +220,23 @@ class Flycron:
     """
 
     def cmd_FLYCRON_GET_POSITION(self, gcmd):
-        steppers = self.printer.lookup_object("force_move").steppers
-        for stepper in steppers.values():
-            if stepper.get_mcu() != self.mcu:
-                continue
-
-            oid = stepper.get_oid()
-            pos = stepper._get_position_cmd.send([oid])["pos"]
-            commanded_pos = self.mcu.lookup_query_command(
-                "stepper_get_commanded_position oid=%c",
-                "stepper_commanded_position oid=%c pos=%i",
-                oid=oid,
-            ).send([oid])["pos"]
-            throttle = u32_to_float(self.pid_dump_cmd.send([])["throttle"])
-
-            gcmd.respond_info(
-                f"Actual {pos}, commanded {commanded_pos}, throttle {throttle}"
-            )
+        stepper = self.get_stepper()
+        if stepper is None:
+            gcmd.respond_error("Could not find stepper for controller")
             return
-        gcmd.respond_error("Could not find stepper for controller")
+
+        oid = stepper.get_oid()
+        pos = stepper._get_position_cmd.send([oid])["pos"]
+        commanded_pos = self.mcu.lookup_query_command(
+            "stepper_get_commanded_position oid=%c",
+            "stepper_commanded_position oid=%c pos=%i",
+            oid=oid,
+        ).send([oid])["pos"]
+        throttle = u32_to_float(self.pid_dump_cmd.send([])["throttle"])
+
+        gcmd.respond_info(
+            f"Actual {pos}, commanded {commanded_pos}, throttle {throttle}"
+        )
 
     cmd_FLYCRON_ENCODER_SET_help = """
     Gets the current commanded and actual positions from a Flycron controller

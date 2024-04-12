@@ -53,6 +53,7 @@ mod app {
 
         pid_gains: Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
         filter_coefs: Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
+        slew_rate_limits: Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
         pid_set_enable: portable_atomic::AtomicBool,
     }
 
@@ -155,6 +156,7 @@ mod app {
 
                 pid_gains: Channel::new(),
                 filter_coefs: Channel::new(),
+                slew_rate_limits: Channel::new(),
                 pid_set_enable: portable_atomic::AtomicBool::new(false),
             },
             Local { usb_dev },
@@ -180,7 +182,9 @@ mod app {
             &last_throttle,
             &pid_gains,
             &filter_coefs,
+            &slew_rate_limits,
             &pid_set_enable,
+            &target_queue,
         ])]
     fn irq_usb(mut cx: irq_usb::Context) {
         if cx.local.usb_dev.on_interrupt() {
@@ -191,10 +195,12 @@ mod app {
                         encoder_override: cx.shared.encoder_override,
                         pid_gains: cx.shared.pid_gains,
                         filter_coefs: cx.shared.filter_coefs,
+                        slew_rate_limits: cx.shared.slew_rate_limits,
                         pid_set_enable: cx.shared.pid_set_enable,
                         pid_last_measured_position: cx.shared.last_measured_position,
                         pid_last_commanded_position: cx.shared.last_commanded_position,
                         pid_last_throttle: cx.shared.last_throttle,
+                        target_queue: cx.shared.target_queue,
                     },
                 })
             });
@@ -265,6 +271,7 @@ mod app {
             &dshot_throttle,
             &pid_gains,
             &filter_coefs,
+            &slew_rate_limits,
             &pid_set_enable,
         ]
     )]

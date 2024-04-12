@@ -15,11 +15,11 @@ pub type EmulatedStepper = stepperemu::EmulatedStepper<PidTimeIterator>;
 
 impl stepperemu::PidTimeIterator for pid::PidTimeIterator {
     fn next(&mut self) -> stepperemu::Instant {
-        self.next()
+        stepperemu::Instant::from_ticks(self.next().ticks() as u32)
     }
 
     fn advance(&mut self) -> stepperemu::Instant {
-        self.advance()
+        stepperemu::Instant::from_ticks(self.advance().ticks() as u32)
     }
 }
 
@@ -30,18 +30,22 @@ impl<'a> stepperemu::Callbacks for StepperCallbacks<'a> {
         self.0.can_append()
     }
 
-    fn append(&mut self, time: Instant, value: u32) {
-        self.0.append(time, value);
+    fn append(&mut self, time: stepperemu::Instant, value: u32) {
+        self.0.append(time.ticks(), value);
     }
 
-    fn update_last(&mut self, time: Instant, value: u32) {
-        self.0.update_last(time, value);
+    fn update_last(&mut self, time: stepperemu::Instant, value: u32) {
+        self.0.update_last(time.ticks(), value);
     }
 }
 
 pub const TARGET_QUEUE_DEPTH: usize = 2000;
 
-pub struct TargetQueueInner(Deque<(Instant, u32), TARGET_QUEUE_DEPTH>);
+pub struct TargetQueueInner {
+    queue: Deque<(Instant, u32), TARGET_QUEUE_DEPTH>,
+    last_value: u32,
+    value_offset: u32,
+}
 
 pub struct TargetQueue {
     inner: BlockingMutex<CriticalSectionRawMutex, RefCell<TargetQueueInner>>,
@@ -50,37 +54,54 @@ pub struct TargetQueue {
 impl TargetQueue {
     pub fn new() -> TargetQueue {
         Self {
-            inner: BlockingMutex::new(RefCell::new(TargetQueueInner(Deque::new()))),
+            inner: BlockingMutex::new(RefCell::new(TargetQueueInner {
+                queue: Deque::new(),
+                last_value: 0,
+                value_offset: 0,
+            })),
         }
     }
 
     fn can_append(&self) -> bool {
-        !self.inner.lock(|q| q.borrow().0.is_full())
+        !self.inner.lock(|q| q.borrow().queue.is_full())
     }
 
-    fn append(&self, time: Instant, value: u32) {
-        self.inner
-            .lock(|q| q.borrow_mut().0.push_back((time, value)).unwrap());
-    }
-
-    fn update_last(&self, _time: Instant, value: u32) {
+    fn append(&self, time: u32, value: u32) {
         self.inner.lock(|q| {
-            if let Some((_, v)) = q.borrow_mut().0.back_mut() {
+            let mut q = q.borrow_mut();
+
+            let time = Clock::clock32_to_clock64(time);
+            q.queue.push_back((time, value)).unwrap();
+            q.last_value = value;
+        });
+    }
+
+    fn update_last(&self, _time: u32, value: u32) {
+        self.inner.lock(|q| {
+            let mut q = q.borrow_mut();
+            if let Some((_, v)) = q.queue.back_mut() {
                 *v = value;
             }
+            q.last_value = value;
+        });
+    }
+
+    fn set_offset(&self, target: i32) {
+        self.inner.lock(|q| {
+            let mut inner = q.borrow_mut();
+            let offset = (target as u32) - (inner.last_value + inner.value_offset);
+            inner.value_offset = offset;
         });
     }
 
     pub fn get_for_control(
         &self,
         time: Instant,
-    ) -> (
-        Option<(Instant, u32)>,
-        Option<(Instant, u32)>,
-        Option<(Instant, u32)>,
-    ) {
+    ) -> (i32, Option<(Instant, i32)>, Option<(Instant, i32)>) {
         self.inner.lock(|q| {
-            let q = &mut q.borrow_mut().0;
+            let mut inner = q.borrow_mut();
+            let last = (inner.last_value + inner.value_offset) as i32;
+            let q = &mut inner.queue;
 
             // Remove from front such that the next item will be read now
 
@@ -91,17 +112,21 @@ impl TargetQueue {
                 q.pop_front();
             }
             if q.is_empty() {
-                return (None, None, None);
+                return (last, None, None);
             }
             let mut iter = q.iter();
             let v0 = iter.next().copied();
-            match v0 {
-                Some((t0, _)) if t0 == time => {}
-                _ => return (None, None, None),
-            }
+            let v0 = match v0 {
+                Some((t0, v0)) if t0 == time => v0,
+                _ => return (last, None, None),
+            };
             let v1 = iter.next().copied();
             let v2 = iter.next().copied();
-            (v0, v1, v2)
+            (
+                (v0 + inner.value_offset) as i32,
+                v1.map(|(t, v)| (t, (v + inner.value_offset) as i32)),
+                v2.map(|(t, v)| (t, (v + inner.value_offset) as i32)),
+            )
         })
     }
 }
@@ -153,7 +178,7 @@ pub fn reset_step_clock(context: &mut CommandContext, oid: u8, clock: u32) {
     context
         .state
         .stepper
-        .reset_clock(Clock::clock32_to_clock64(clock));
+        .reset_clock(stepperemu::Instant::from_ticks(clock));
 }
 
 #[klipper_command]
@@ -181,6 +206,11 @@ pub fn stepper_get_commanded_position(context: &mut CommandContext, oid: u8) {
 }
 
 #[klipper_command]
+pub fn stepper_set_bias(context: &mut CommandContext, target: u32) {
+    context.interfaces.target_queue.set_offset(target as i32);
+}
+
+#[klipper_command]
 pub fn stepper_stop_on_trigger(context: &mut CommandContext, oid: u8, _trsync_oid: u8) {
     if context.state.stepper_oid.map_or(false, |o| o != oid) {
         return;
@@ -190,24 +220,47 @@ pub fn stepper_stop_on_trigger(context: &mut CommandContext, oid: u8, _trsync_oi
 
 #[klipper_command]
 pub fn config_digital_out(
-    _context: &mut CommandContext,
-    _oid: u8,
-    _pin: u8,
+    context: &mut CommandContext,
+    oid: u8,
+    pin: u8,
     _value: u8,
     _default_value: u8,
     _max_duration: u32,
 ) {
-    // TODO:
+    if pin != Pins::Enable.into() {
+        return;
+    }
+    context.state.stepper_enable_oid = Some(oid);
 }
 
 #[klipper_command]
-pub fn queue_digital_out(_context: &mut CommandContext, _oid: u8, _clock: u32, _on_ticks: u32) {
-    // TODO:
+pub fn queue_digital_out(context: &mut CommandContext, oid: u8, _clock: u32, on_ticks: u32) {
+    if Some(oid) != context.state.stepper_enable_oid {
+        return;
+    }
+    let enable = on_ticks != 0;
+    if !enable {
+        context.state.stepper.reset_target(0);
+    }
+    context
+        .interfaces
+        .pid_set_enable
+        .store(enable, portable_atomic::Ordering::SeqCst);
 }
 
 #[klipper_command]
-pub fn update_digital_out(_context: &mut CommandContext, _oid: u8, _value: u8) {
-    // TODO:
+pub fn update_digital_out(context: &mut CommandContext, oid: u8, value: u8) {
+    if Some(oid) != context.state.stepper_enable_oid {
+        return;
+    }
+    let enable = value != 0;
+    if !enable {
+        context.state.stepper.reset_target(0);
+    }
+    context
+        .interfaces
+        .pid_set_enable
+        .store(enable, portable_atomic::Ordering::SeqCst);
 }
 
 klipper_enumeration! {

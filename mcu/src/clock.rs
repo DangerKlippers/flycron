@@ -26,7 +26,7 @@ impl Clock {
         tim2.cr1.modify(|_, w| w.cen().set_bit());
         tim2.psc.write(|w| w.psc().variant(0));
         tim2.ccr2()
-            .write(|w| w.ccr().variant(u32::MAX - (u32::MAX - 1)));
+            .write(|w| w.ccr().variant(u32::MAX - (u32::MAX >> 1)));
         tim2.dier.modify(|_, w| {
             w.uie().set_bit(); // Full period interrupt
             w.cc2ie().set_bit() // Half period interrupt

@@ -52,18 +52,21 @@ impl PidTimeIterator {
 pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
     let mut controller = control_law::Controller::new(400.0);
     let mut ticks = PidTimeIterator::new();
-    let mut last_pos = 0u32;
     loop {
         let next_time = ticks.next();
 
         Clock::delay_until(next_time).await;
-        if let Ok((target, gains)) = cx.shared.pid_gains.try_receive() {
+        while let Ok((target, gains)) = cx.shared.pid_gains.try_receive() {
             defmt::info!("update gains {} {}", target, gains);
             controller.update_gains(target as usize, &gains);
         }
-        if let Ok((target, a, b)) = cx.shared.filter_coefs.try_receive() {
+        while let Ok((target, a, b)) = cx.shared.filter_coefs.try_receive() {
             defmt::info!("update filter {} {} {}", target, a, b);
             controller.update_filters(target as usize, a, b);
+        }
+        while let Ok((target, rising, falling)) = cx.shared.slew_rate_limits.try_receive() {
+            defmt::info!("update slew rate {} {} {}", target, rising, falling);
+            controller.update_slew_rate(target as usize, rising, falling);
         }
 
         if cx.shared.encoder_override.signaled() {
@@ -76,30 +79,15 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             .last_measured_position
             .store(current_position, portable_atomic::Ordering::SeqCst);
 
-        if !cx
-            .shared
-            .pid_set_enable
-            .load(portable_atomic::Ordering::Relaxed)
-        {
-            cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
-            continue;
-        }
-
-        let (c0, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
-        let target_position = if let Some((_, v0)) = c0 {
-            last_pos = v0;
-            v0
-        } else {
-            last_pos
-        } as i32;
+        let (target_position, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
         cx.shared
             .last_commanded_position
             .store(target_position, portable_atomic::Ordering::SeqCst);
 
-        let v0 = match (c0, c1) {
-            (Some((t0, p0)), Some((t1, p1))) => {
-                (((p1 as i32) - (p0 as i32)) as f32)
-                    / ((t1 - t0).ticks() as f32 / (CLOCK_FREQ as f32))
+        let v0 = match c1 {
+            Some((t1, p1)) => {
+                (((p1 as i32) - (target_position)) as f32)
+                    / ((t1 - next_time).ticks() as f32 / (CLOCK_FREQ as f32))
             }
             _ => 0.0,
         };
@@ -125,14 +113,23 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             1.0 / (PID_RATE as f32),
         );
         let throttle = output.output;
-        // let throttle = 1.0 as f32;
-        // defmt::info!("TELE {} {} {}", target_position, v0, a0);
 
-        let scaled_throttle = throttle.clamp(0.1, 0.9) * ThrottleCommand::MAX as f32;
+        if !cx
+            .shared
+            .pid_set_enable
+            .load(portable_atomic::Ordering::Relaxed)
+        {
+            cx.shared.dshot_throttle.signal(ThrottleCommand::MotorsOff);
+            cx.shared
+                .last_throttle
+                .store(0.0, portable_atomic::Ordering::SeqCst);
+            continue;
+        }
+
+        let scaled_throttle = throttle.clamp(0.1, 0.9);
         cx.shared
             .last_throttle
             .store(scaled_throttle, portable_atomic::Ordering::SeqCst);
-
         cx.shared
             .dshot_throttle
             .signal(ThrottleCommand::Throttle(scaled_throttle as u16));
@@ -169,6 +166,20 @@ pub fn pid_set_coefs(context: &mut CommandContext, target: u32, alpha: u32, beta
         target as u8,
         unsafe { transmute_copy(&alpha) },
         unsafe { transmute_copy(&beta) },
+    ));
+}
+
+#[klipper_command]
+pub fn pid_set_slew_limits(
+    context: &mut CommandContext,
+    target: u32,
+    limit_rising: u32,
+    limit_falling: u32,
+) {
+    let _ = context.interfaces.slew_rate_limits.try_send((
+        target as u8,
+        unsafe { transmute_copy(&limit_rising) },
+        unsafe { transmute_copy(&limit_falling) },
     ));
 }
 
