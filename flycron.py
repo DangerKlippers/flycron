@@ -87,8 +87,8 @@ class Flycron:
         self.obs_alpha = config.getfloat("obs_alpha", 0.8)
         self.obs_beta = config.getfloat("obs_beta", 0.07)
 
-        self.slew_limit_rising = config.getfloat("slew_limit_rising", float(3.40282347E+37))
-        self.slew_limit_falling = config.getfloat("slew_limit_falling", float(-3.40282347E+37))
+        self.slew_limit_rising = config.getfloat("slew_limit_rising", 999999999999999.0)
+        self.slew_limit_falling = config.getfloat("slew_limit_falling", -999999999999999.0)
 
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
