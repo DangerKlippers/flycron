@@ -142,9 +142,9 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
         cx.shared
             .last_throttle
             .store(scaled_throttle, portable_atomic::Ordering::SeqCst);
-        cx.shared
-            .dshot_throttle
-            .signal(ThrottleCommand::Throttle(scaled_throttle as u16));
+        cx.shared.dshot_throttle.signal(ThrottleCommand::Throttle(
+            (scaled_throttle * ThrottleCommand::MAX as f32) as u16,
+        ));
     }
 }
 
