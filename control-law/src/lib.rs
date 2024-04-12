@@ -166,7 +166,7 @@ impl Controller {
 
     pub fn thrust_throttle_raw(&self, target_thrust: f32) -> f32 {
         let a = 836.0;
-        let b = 102;
+        let b = 102.0;
         let c = -7.6 - target_thrust;
         let discriminant: f32 = b * b - 4.0 * a * c;
         if discriminant > 0.0 {
