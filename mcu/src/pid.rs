@@ -125,9 +125,10 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             1.0 / (PID_RATE as f32),
         );
         let throttle = output.output;
+        // let throttle = 1.0 as f32;
         // defmt::info!("TELE {} {} {}", target_position, v0, a0);
 
-        let scaled_throttle = throttle.clamp(0.2, 1.0) * ThrottleCommand::MAX as f32;
+        let scaled_throttle = throttle.clamp(0.1, 0.9) * ThrottleCommand::MAX as f32;
         cx.shared
             .last_throttle
             .store(scaled_throttle, portable_atomic::Ordering::SeqCst);
