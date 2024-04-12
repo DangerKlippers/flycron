@@ -1,6 +1,6 @@
 use crate::{
     clock::Clock,
-    pid::PidTimeIterator,
+    pid::{ModelParam, PidTimeIterator},
     stepper_emulation::{EmulatedStepper, TargetQueue},
 };
 use anchor::*;
@@ -39,6 +39,7 @@ pub struct CommandInterfaces<'ctx> {
     pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_throttle: &'ctx portable_atomic::AtomicF32,
     pub target_queue: &'ctx TargetQueue,
+    pub model_params: &'ctx Channel<CriticalSectionRawMutex, ModelParam, 2>,
 }
 
 pub struct CommandContext<'ctx> {

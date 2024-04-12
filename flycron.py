@@ -59,6 +59,8 @@ class Flycron:
             raise config.error(f"unknown MCU '{mcu_name}'")
         self._stepper = None
 
+        self.mass = config.getfloat("mass", 400.0)
+
         self.pid_pos = PidParams(
             0,
             "pos",
@@ -138,6 +140,9 @@ class Flycron:
         self.pid_set_slew_limits = self.mcu.lookup_command(
             "pid_set_slew_limits target=%u limit_rising=%u limit_falling=%u",
         )
+        self.pid_set_mass = self.mcu.lookup_command(
+            "pid_set_mass mass_grams=%u",
+        )
         self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
         self.pid_dump_cmd = self.mcu.lookup_query_command(
             "pid_get_dump", "pid_dump throttle=%u"
@@ -167,6 +172,7 @@ class Flycron:
                 float_to_u32(self.slew_limit_falling),
             ]
         )
+        self.pid_set_mass.send([float_to_u32(self.mass)])
 
     def get_stepper(self):
         if self._stepper is None:

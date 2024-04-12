@@ -4,9 +4,13 @@ use crate::{
     dshot::ThrottleCommand,
 };
 use anchor::*;
-use control_law::PidGains;
+use control_law::{Controller, PidGains};
 use core::mem::transmute_copy;
 use fugit::HertzU64;
+
+pub enum ModelParam {
+    Mass(f32),
+}
 
 pub const PID_RATE: u64 = 1000;
 pub const PID_PERIOD: Duration = Duration::from_rate(HertzU64::Hz(PID_RATE));
@@ -50,7 +54,7 @@ impl PidTimeIterator {
 }
 
 pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
-    let mut controller = control_law::Controller::new(400.0);
+    let mut controller = Controller::new(400.0);
     let mut ticks = PidTimeIterator::new();
     loop {
         let next_time = ticks.next();
@@ -67,6 +71,14 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
         while let Ok((target, rising, falling)) = cx.shared.slew_rate_limits.try_receive() {
             defmt::info!("update slew rate {} {} {}", target, rising, falling);
             controller.update_slew_rate(target as usize, rising, falling);
+        }
+        while let Ok(param) = cx.shared.model_params.try_receive() {
+            match param {
+                ModelParam::Mass(mass) => {
+                    defmt::info!("update mass {}", mass);
+                    controller.set_mass(mass);
+                }
+            }
         }
 
         if cx.shared.encoder_override.signaled() {
@@ -191,6 +203,14 @@ pub fn pid_set_enable(context: &mut CommandContext, enable: bool) {
         .interfaces
         .pid_set_enable
         .store(value, portable_atomic::Ordering::SeqCst);
+}
+
+#[klipper_command]
+pub fn pid_set_mass(context: &mut CommandContext, mass_grams: u32) {
+    let _ = context
+        .interfaces
+        .model_params
+        .try_send(ModelParam::Mass(unsafe { transmute_copy(&mass_grams) }));
 }
 
 #[klipper_command]

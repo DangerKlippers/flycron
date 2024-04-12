@@ -27,6 +27,7 @@ mod app {
         dshot::{DShotSpeed, Dshot, ThrottleCommand},
         encoder::Encoder,
         hal::{prelude::*, qei::Qei},
+        pid::ModelParam,
         stepper_emulation::TargetQueue,
         usb::*,
     };
@@ -54,6 +55,7 @@ mod app {
         pid_gains: Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
         filter_coefs: Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
         slew_rate_limits: Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
+        model_params: Channel<CriticalSectionRawMutex, ModelParam, 2>,
         pid_set_enable: portable_atomic::AtomicBool,
     }
 
@@ -157,6 +159,7 @@ mod app {
                 pid_gains: Channel::new(),
                 filter_coefs: Channel::new(),
                 slew_rate_limits: Channel::new(),
+                model_params: Channel::new(),
                 pid_set_enable: portable_atomic::AtomicBool::new(false),
             },
             Local { usb_dev },
@@ -184,6 +187,7 @@ mod app {
             &filter_coefs,
             &slew_rate_limits,
             &pid_set_enable,
+            &model_params,
             &target_queue,
         ])]
     fn irq_usb(mut cx: irq_usb::Context) {
@@ -196,6 +200,7 @@ mod app {
                         pid_gains: cx.shared.pid_gains,
                         filter_coefs: cx.shared.filter_coefs,
                         slew_rate_limits: cx.shared.slew_rate_limits,
+                        model_params: cx.shared.model_params,
                         pid_set_enable: cx.shared.pid_set_enable,
                         pid_last_measured_position: cx.shared.last_measured_position,
                         pid_last_commanded_position: cx.shared.last_commanded_position,
@@ -272,6 +277,7 @@ mod app {
             &pid_gains,
             &filter_coefs,
             &slew_rate_limits,
+            &model_params,
             &pid_set_enable,
         ]
     )]
