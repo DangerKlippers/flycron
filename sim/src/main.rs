@@ -83,33 +83,6 @@ impl Default for Plant {
     }
 }
 
-// #[derive(Debug)]
-// pub struct Move {
-//     start_time: Second<f64>,
-//     start: Meter<f64>,
-//     end: Meter<f64>,
-//     velocity: MeterPerSecond<f64>,
-//     accel: MeterPerSecond2<f64>,
-// }
-//
-// impl Move {
-//     fn new(
-//         start_time: Second<f64>,
-//         start: Meter<f64>,
-//         end: Meter<f64>,
-//         velocity: MeterPerSecond<f64>,
-//         accel: MeterPerSecond2<f64>,
-//     ) -> Self {
-//         Self {
-//             start_time,
-//             start,
-//             end,
-//             velocity,
-//             accel,
-//         }
-//     }
-// }
-
 #[derive(Debug)]
 pub struct ZMoveQueue {
     location: Meter<f64>,
@@ -323,7 +296,8 @@ impl Simulator {
                 self.system.current_position(),
                 1.0 / (self.controller_ticks_per_second.value_unsafe as f32),
             );
-            self.system.set_input_throttle(output.output as f64);
+            self.system
+                .set_input_throttle(output.output.clamp(0.55, 0.85) as f64);
             self.next_controller_update += 1.0 / self.controller_ticks_per_second;
             self.controller_updates += 1;
 
@@ -359,7 +333,7 @@ fn main() {
         0,
         &control_law::PidGains {
             limit: 240000.0,
-            p: 12.0,
+            p: 0.0,
             p_max: 240000.0,
             i: 0.0,
             i_max: 1.0,
@@ -371,20 +345,15 @@ fn main() {
         1,
         &control_law::PidGains {
             limit: 2400.0,
-            p: 450.0,
+            p: 0.0,
             p_max: 2400.0,
-            i: 450.0,
+            i: 0.0,
             i_max: 600.0,
             d: 0.0,
             d_max: 1.0,
         },
     );
-    sim.controller.update_filters(0, 0.5, 0.07);
-
-    sim.controller
-        .update_slew_rate(1, 1000.0, f32::NEG_INFINITY);
-    sim.controller
-        .update_slew_rate(2, 1000.0, f32::NEG_INFINITY);
+    sim.controller.update_filters(0, 0.8, 0.1);
 
     let mut writer = csv::Writer::from_path("/tmp/sim.csv").expect("CSV writer creation failed");
 

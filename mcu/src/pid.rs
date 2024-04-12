@@ -138,7 +138,16 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             continue;
         }
 
-        let scaled_throttle = throttle.clamp(0.1, 0.9);
+        let scaled_throttle = throttle.clamp(
+            cx.shared
+                .throttle_limits
+                .0
+                .load(portable_atomic::Ordering::SeqCst),
+            cx.shared
+                .throttle_limits
+                .1
+                .load(portable_atomic::Ordering::SeqCst),
+        );
         cx.shared
             .last_throttle
             .store(scaled_throttle, portable_atomic::Ordering::SeqCst);
@@ -211,6 +220,22 @@ pub fn pid_set_mass(context: &mut CommandContext, mass_grams: u32) {
         .interfaces
         .model_params
         .try_send(ModelParam::Mass(unsafe { transmute_copy(&mass_grams) }));
+}
+
+#[klipper_command]
+pub fn pid_set_throttle_limits(context: &mut CommandContext, min: u32, max: u32) {
+    let min: f32 = unsafe { transmute_copy(&min) };
+    let max: f32 = unsafe { transmute_copy(&max) };
+    context
+        .interfaces
+        .throttle_limits
+        .0
+        .store(min, portable_atomic::Ordering::SeqCst);
+    context
+        .interfaces
+        .throttle_limits
+        .1
+        .store(max, portable_atomic::Ordering::SeqCst);
 }
 
 #[klipper_command]

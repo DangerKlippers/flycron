@@ -34,6 +34,7 @@ pub struct CommandInterfaces<'ctx> {
     pub pid_gains: &'ctx Channel<CriticalSectionRawMutex, (u8, PidGains), 2>,
     pub filter_coefs: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
     pub slew_rate_limits: &'ctx Channel<CriticalSectionRawMutex, (u8, f32, f32), 2>,
+    pub throttle_limits: &'ctx (portable_atomic::AtomicF32, portable_atomic::AtomicF32),
     pub pid_set_enable: &'ctx portable_atomic::AtomicBool,
     pub pid_last_measured_position: &'ctx portable_atomic::AtomicI32,
     pub pid_last_commanded_position: &'ctx portable_atomic::AtomicI32,

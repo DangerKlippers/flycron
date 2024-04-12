@@ -111,6 +111,9 @@ class Flycron:
         self.slew_limit_throttle = SlewrateLimit(2, "throttle", {})
         self.slew_limit_throttle.load(config)
 
+        self.throttle_min = config.getfloat("throttle_min", 0.0)
+        self.throttle_max = config.getfloat("throttle_max", 1.0)
+
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
         self.printer.register_event_handler("stepper_enable:motor_off", self._motor_off)
@@ -135,6 +138,13 @@ class Flycron:
             self.name,
             self.cmd_FLYCRON_SETSLEW,
             desc=self.cmd_FLYCRON_SETSLEW_help,
+        )
+        gcode.register_mux_command(
+            "FLYCRON_SETTHROTTLE_LIMIT",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_SETTHROTTLE_LIMIT,
+            desc=self.cmd_FLYCRON_SETTHROTTLE_LIMIT_help,
         )
         gcode.register_mux_command(
             "FLYCRON_GET_POSITION",
@@ -164,6 +174,9 @@ class Flycron:
         self.pid_set_mass = self.mcu.lookup_command(
             "pid_set_mass mass_grams=%u",
         )
+        self.pid_set_throttle_limits = self.mcu.lookup_command(
+            "pid_set_throttle_limits min=%u max=%u",
+        )
         self.pid_enable_cmd = self.mcu.lookup_command("pid_set_enable enable=%c")
         self.pid_dump_cmd = self.mcu.lookup_query_command(
             "pid_get_dump", "pid_dump throttle=%u"
@@ -188,6 +201,9 @@ class Flycron:
         )
         self.slew_limit_velocity.apply(self.pid_set_slew_limits)
         self.slew_limit_throttle.apply(self.pid_set_slew_limits)
+        self.pid_set_throttle_limits.send(
+            [float_to_u32(self.throttle_min), float_to_u32(self.throttle_max)]
+        )
         self.pid_set_mass.send([float_to_u32(self.mass)])
 
     def get_stepper(self):
@@ -240,6 +256,15 @@ class Flycron:
         else:
             gcmd.respond_error("Unknown slew limit target")
             return
+        self._apply()
+
+    cmd_FLYCRON_SETTHROTTLE_LIMIT_help = """
+    Sets the slew rate limits of the final throttle output
+    """
+
+    def cmd_FLYCRON_SETTHROTTLE_LIMIT(self, gcmd):
+        self.throttle_min = gcmd.get_float("MIN", self.throttle_min)
+        self.throttle_max = gcmd.get_float("MAX", self.throttle_max)
         self._apply()
 
     cmd_FLYCRON_GET_POSITION_help = """
