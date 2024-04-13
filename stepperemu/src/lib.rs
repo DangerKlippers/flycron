@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 
+use core::cell::RefCell;
 use heapless::Deque;
 
 pub type Instant = fugit::Instant<u32, 1, 96_000_000>;
@@ -285,6 +286,112 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
 
     pub fn has_moves(&self) -> bool {
         self.current_move.is_some() || !self.queue.is_empty()
+    }
+}
+
+pub struct TargetQueueInner<const N: usize> {
+    queue: Deque<(Instant, u32), N>,
+    last_value: u32,
+}
+
+pub type TargetQueueInnerTypeCell<const N: usize> = RefCell<TargetQueueInner<N>>;
+
+pub trait Mutex<T> {
+    fn new(val: T) -> Self;
+    fn lock<R>(&self, f: impl FnOnce(&T) -> R) -> R;
+}
+
+pub struct TargetQueue<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> {
+    inner: M,
+}
+
+impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> Default for TargetQueue<M, N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
+    pub fn new() -> Self {
+        Self {
+            inner: M::new(RefCell::new(TargetQueueInner {
+                queue: Deque::new(),
+                last_value: 0,
+            })),
+        }
+    }
+
+    fn can_append(&self) -> bool {
+        !self.inner.lock(|q| q.borrow().queue.is_full())
+    }
+
+    fn append(&self, time: Instant, value: u32) {
+        self.inner.lock(|q| {
+            let mut q = q.borrow_mut();
+
+            q.queue.push_back((time, value)).unwrap();
+            q.last_value = value;
+        });
+    }
+
+    fn update_last(&self, _time: Instant, value: u32) {
+        self.inner.lock(|q| {
+            let mut q = q.borrow_mut();
+            if let Some((_, v)) = q.queue.back_mut() {
+                *v = value;
+            }
+            q.last_value = value;
+        });
+    }
+
+    pub fn get_for_control(
+        &self,
+        time: Instant,
+    ) -> (i32, Option<(Instant, i32)>, Option<(Instant, i32)>) {
+        self.inner.lock(|q| {
+            let mut inner = q.borrow_mut();
+            let last = inner.last_value as i32;
+            let q = &mut inner.queue;
+
+            // Remove from front such that the next item will be read now
+
+            while let Some((t, _)) = q.front() {
+                if *t >= time {
+                    break;
+                }
+                q.pop_front();
+            }
+            if q.is_empty() {
+                return (last, None, None);
+            }
+            let mut iter = q.iter();
+            let v0 = iter.next().copied();
+            let v0 = match v0 {
+                Some((t0, v0)) if t0 == time => v0,
+                _ => return (last, None, None),
+            };
+            let v1 = iter.next().copied();
+            let v2 = iter.next().copied();
+            (
+                v0 as i32,
+                v1.map(|(t, v)| (t, v as i32)),
+                v2.map(|(t, v)| (t, v as i32)),
+            )
+        })
+    }
+}
+
+impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> Callbacks for &TargetQueue<M, N> {
+    fn append(&mut self, time: Instant, value: u32) {
+        TargetQueue::append(self, time, value)
+    }
+
+    fn update_last(&mut self, time: Instant, value: u32) {
+        TargetQueue::update_last(self, time, value)
+    }
+
+    fn can_append(&self) -> bool {
+        TargetQueue::can_append(self)
     }
 }
 

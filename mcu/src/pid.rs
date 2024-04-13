@@ -91,10 +91,16 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             .last_measured_position
             .store(current_position, portable_atomic::Ordering::SeqCst);
 
-        let (target_position, c1, c2) = cx.shared.target_queue.get_for_control(next_time);
+        let (target_position, c1, c2) = cx
+            .shared
+            .target_queue
+            .get_for_control(stepperemu::Instant::from_ticks(next_time.ticks() as u32));
         cx.shared
             .last_commanded_position
             .store(target_position, portable_atomic::Ordering::SeqCst);
+
+        let c1 = c1.map(|(t, p)| (Clock::clock32_to_clock64(t.ticks()), p));
+        let c2 = c2.map(|(t, p)| (Clock::clock32_to_clock64(t.ticks()), p));
 
         let v0 = match c1 {
             Some((t1, p1)) => {
