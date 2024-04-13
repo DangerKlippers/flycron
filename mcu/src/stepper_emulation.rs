@@ -8,7 +8,7 @@ use embassy_sync::blocking_mutex::{raw::CriticalSectionRawMutex, Mutex as Blocki
 use rtic::Mutex;
 use stepperemu::Direction;
 
-pub type EmulatedStepper = stepperemu::EmulatedStepper<PidTimeIterator>;
+pub type EmulatedStepper = stepperemu::EmulatedStepper<PidTimeIterator, 128>;
 
 impl stepperemu::PidTimeIterator for pid::PidTimeIterator {
     fn next(&mut self) -> u32 {
@@ -19,8 +19,6 @@ impl stepperemu::PidTimeIterator for pid::PidTimeIterator {
         self.advance().ticks() as u32
     }
 }
-
-pub const TARGET_QUEUE_DEPTH: usize = 2000;
 
 pub struct MutexWrapper;
 
@@ -36,7 +34,7 @@ impl stepperemu::target_queue::Mutex for MutexWrapper {
     }
 }
 
-pub type TargetQueue = stepperemu::target_queue::TargetQueue<MutexWrapper, TARGET_QUEUE_DEPTH>;
+pub type TargetQueue = stepperemu::target_queue::TargetQueue<MutexWrapper, 2000>;
 
 pub fn process_moves(cx: &mut crate::app::stepper_move_processor::Context) {
     cx.shared.command_state.lock(|cs| {

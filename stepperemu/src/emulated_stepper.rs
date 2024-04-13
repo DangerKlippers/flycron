@@ -7,12 +7,6 @@ pub enum Direction {
     Backward,
 }
 
-#[derive(Debug)]
-struct State {
-    last_step: Instant,
-    position: u32,
-}
-
 #[derive(Debug, Copy, Clone, defmt::Format)]
 #[repr(C)]
 pub struct Move {
@@ -64,6 +58,12 @@ impl Move {
             direction: self.direction,
         }
     }
+}
+
+#[derive(Debug)]
+struct State {
+    last_step: Instant,
+    position: u32,
 }
 
 impl State {
@@ -134,8 +134,8 @@ pub trait Callbacks {
 }
 
 #[derive(Debug)]
-pub struct EmulatedStepper<T> {
-    queue: heapless::Deque<Move, 128>,
+pub struct EmulatedStepper<T, const N: usize> {
+    queue: heapless::Deque<Move, N>,
     current_move: Option<Move>,
     next_direction: Direction,
     state: State,
@@ -176,7 +176,7 @@ impl CallbackState {
     }
 }
 
-impl<T: PidTimeIterator> EmulatedStepper<T> {
+impl<T: PidTimeIterator, const N: usize> EmulatedStepper<T, N> {
     pub fn new(target_time: T) -> Self {
         Self {
             queue: Deque::new(),
