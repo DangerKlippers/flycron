@@ -414,15 +414,15 @@ mod tests {
     }
 
     impl PidTimeIterator for TestPidTimeIterator {
-        fn advance(&mut self) -> Instant {
+        fn advance(&mut self) -> u32 {
             self.0 += self.1;
-            self.0
+            self.0.ticks()
         }
 
-        fn next(&mut self) -> Instant {
+        fn next(&mut self) -> u32 {
             loop {
                 if self.0 >= self.2 {
-                    return self.0;
+                    return self.0.ticks();
                 } else {
                     self.advance();
                 }
@@ -498,7 +498,7 @@ mod tests {
         ));
 
         let first_step = Instant::from_ticks(6000);
-        s.reset_clock(first_step);
+        s.reset_clock(first_step.ticks());
         s.queue_move(1066, 10000, 0);
         s.queue_move(1066, 100, 10);
         s.set_next_dir(Direction::Backward);
@@ -551,7 +551,7 @@ mod tests {
         s.target_time.set_time(Instant::from_ticks(0));
 
         let first_step = Instant::from_ticks(100000);
-        s.reset_clock(first_step);
+        s.reset_clock(first_step.ticks());
         s.queue_move(100, 60000, 0);
         let mut cbs = Cbs { buf: vec![] };
         s.advance(&mut cbs);
