@@ -11,33 +11,32 @@ use stepperemu::Direction;
 pub type EmulatedStepper = stepperemu::EmulatedStepper<PidTimeIterator>;
 
 impl stepperemu::PidTimeIterator for pid::PidTimeIterator {
-    fn next(&mut self) -> stepperemu::Instant {
-        stepperemu::Instant::from_ticks(self.next().ticks() as u32)
+    fn next(&mut self) -> u32 {
+        self.next().ticks() as u32
     }
 
-    fn advance(&mut self) -> stepperemu::Instant {
-        stepperemu::Instant::from_ticks(self.advance().ticks() as u32)
+    fn advance(&mut self) -> u32 {
+        self.advance().ticks() as u32
     }
 }
 
 pub const TARGET_QUEUE_DEPTH: usize = 2000;
 
-pub struct MutexWrapper<T>(BlockingMutex<CriticalSectionRawMutex, T>);
+pub struct MutexWrapper;
 
-impl<T> stepperemu::Mutex<T> for MutexWrapper<T> {
-    fn new(val: T) -> Self {
-        Self(BlockingMutex::new(val))
+impl stepperemu::Mutex for MutexWrapper {
+    type Inner<T> = BlockingMutex<CriticalSectionRawMutex, T>;
+
+    fn new<T>(val: T) -> Self::Inner<T> {
+        BlockingMutex::new(val)
     }
 
-    fn lock<R>(&self, f: impl FnOnce(&T) -> R) -> R {
-        self.0.lock(f)
+    fn lock<T, R>(inner: &Self::Inner<T>, f: impl FnOnce(&T) -> R) -> R {
+        inner.lock(f)
     }
 }
 
-pub type TargetQueue = stepperemu::TargetQueue<
-    MutexWrapper<stepperemu::TargetQueueInnerTypeCell<TARGET_QUEUE_DEPTH>>,
-    TARGET_QUEUE_DEPTH,
->;
+pub type TargetQueue = stepperemu::TargetQueue<MutexWrapper, TARGET_QUEUE_DEPTH>;
 
 pub fn process_moves(cx: &mut crate::app::stepper_move_processor::Context) {
     cx.shared.command_state.lock(|cs| {
@@ -82,10 +81,7 @@ pub fn reset_step_clock(context: &mut CommandContext, oid: u8, clock: u32) {
     if context.state.stepper_oid.map_or(false, |o| o != oid) {
         return;
     }
-    context
-        .state
-        .stepper
-        .reset_clock(stepperemu::Instant::from_ticks(clock));
+    context.state.stepper.reset_clock(clock);
 }
 
 #[klipper_command]

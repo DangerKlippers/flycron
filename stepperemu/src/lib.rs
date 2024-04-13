@@ -3,8 +3,8 @@
 use core::cell::RefCell;
 use heapless::Deque;
 
-pub type Instant = fugit::Instant<u32, 1, 96_000_000>;
-pub type Duration = fugit::Duration<u32, 1, 96_000_000>;
+type Instant = fugit::Instant<u32, 1, 1>;
+type Duration = fugit::Duration<u32, 1, 1>;
 
 #[derive(Debug, defmt::Format, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum Direction {
@@ -128,8 +128,8 @@ enum AdvanceResult {
 }
 
 pub trait PidTimeIterator {
-    fn next(&mut self) -> Instant;
-    fn advance(&mut self) -> Instant;
+    fn next(&mut self) -> u32;
+    fn advance(&mut self) -> u32;
 }
 
 pub trait Callbacks {
@@ -200,8 +200,8 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
         }
     }
 
-    pub fn reset_clock(&mut self, time: Instant) {
-        self.state.last_step = time;
+    pub fn reset_clock(&mut self, time: u32) {
+        self.state.last_step = Instant::from_ticks(time);
     }
 
     pub fn current_position(&self) -> i32 {
@@ -215,8 +215,11 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
     pub fn advance(&mut self, callbacks: &mut impl Callbacks) {
         if let Some(reset_target) = self.reset_target.take() {
             self.state.position = reset_target;
-            self.callback_state
-                .emit(self.target_time.next(), reset_target, callbacks);
+            self.callback_state.emit(
+                Instant::from_ticks(self.target_time.next()),
+                reset_target,
+                callbacks,
+            );
         }
         while self.callback_state.can_append(callbacks) {
             let cmd = match self.current_move.as_mut() {
@@ -231,7 +234,7 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
             };
 
             // Get next PID tick
-            let mut next_time = self.target_time.next();
+            let mut next_time = Instant::from_ticks(self.target_time.next());
             while cmd.count != 0 && self.callback_state.can_append(callbacks) {
                 // Apply current command up to the next tick
                 match self.state.advance(cmd, next_time) {
@@ -248,11 +251,11 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
                         self.callback_state
                             .emit(next_time, self.state.position, callbacks);
                         self.callback_state.incomplete = false;
-                        next_time = self.target_time.advance();
+                        next_time = Instant::from_ticks(self.target_time.advance());
                         *cmd = new_cmd;
                     }
                     AdvanceResult::FutureMove => {
-                        next_time = self.target_time.advance();
+                        next_time = Instant::from_ticks(self.target_time.advance());
                         self.callback_state.incomplete = false;
                     }
                 };
@@ -287,6 +290,10 @@ impl<T: PidTimeIterator> EmulatedStepper<T> {
     pub fn has_moves(&self) -> bool {
         self.current_move.is_some() || !self.queue.is_empty()
     }
+
+    pub fn move_count(&self) -> usize {
+        self.queue.capacity()
+    }
 }
 
 pub struct TargetQueueInner<const N: usize> {
@@ -296,22 +303,23 @@ pub struct TargetQueueInner<const N: usize> {
 
 pub type TargetQueueInnerTypeCell<const N: usize> = RefCell<TargetQueueInner<N>>;
 
-pub trait Mutex<T> {
-    fn new(val: T) -> Self;
-    fn lock<R>(&self, f: impl FnOnce(&T) -> R) -> R;
+pub trait Mutex {
+    type Inner<T>;
+    fn new<T>(val: T) -> Self::Inner<T>;
+    fn lock<T, R>(inner: &Self::Inner<T>, f: impl FnOnce(&T) -> R) -> R;
 }
 
-pub struct TargetQueue<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> {
-    inner: M,
+pub struct TargetQueue<M: Mutex, const N: usize> {
+    inner: M::Inner<TargetQueueInnerTypeCell<N>>,
 }
 
-impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> Default for TargetQueue<M, N> {
+impl<M: Mutex, const N: usize> Default for TargetQueue<M, N> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
+impl<M: Mutex, const N: usize> TargetQueue<M, N> {
     pub fn new() -> Self {
         Self {
             inner: M::new(RefCell::new(TargetQueueInner {
@@ -322,11 +330,11 @@ impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
     }
 
     fn can_append(&self) -> bool {
-        !self.inner.lock(|q| q.borrow().queue.is_full())
+        !M::lock(&self.inner, |q| q.borrow().queue.is_full())
     }
 
     fn append(&self, time: Instant, value: u32) {
-        self.inner.lock(|q| {
+        M::lock(&self.inner, |q| {
             let mut q = q.borrow_mut();
 
             q.queue.push_back((time, value)).unwrap();
@@ -335,7 +343,7 @@ impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
     }
 
     fn update_last(&self, _time: Instant, value: u32) {
-        self.inner.lock(|q| {
+        M::lock(&self.inner, |q| {
             let mut q = q.borrow_mut();
             if let Some((_, v)) = q.queue.back_mut() {
                 *v = value;
@@ -344,11 +352,9 @@ impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
         });
     }
 
-    pub fn get_for_control(
-        &self,
-        time: Instant,
-    ) -> (i32, Option<(Instant, i32)>, Option<(Instant, i32)>) {
-        self.inner.lock(|q| {
+    pub fn get_for_control(&self, time: u32) -> (i32, Option<(u32, i32)>, Option<(u32, i32)>) {
+        let time = Instant::from_ticks(time);
+        M::lock(&self.inner, |q| {
             let mut inner = q.borrow_mut();
             let last = inner.last_value as i32;
             let q = &mut inner.queue;
@@ -374,14 +380,14 @@ impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> TargetQueue<M, N> {
             let v2 = iter.next().copied();
             (
                 v0 as i32,
-                v1.map(|(t, v)| (t, v as i32)),
-                v2.map(|(t, v)| (t, v as i32)),
+                v1.map(|(t, v)| (t.ticks(), v as i32)),
+                v2.map(|(t, v)| (t.ticks(), v as i32)),
             )
         })
     }
 }
 
-impl<M: Mutex<TargetQueueInnerTypeCell<N>>, const N: usize> Callbacks for &TargetQueue<M, N> {
+impl<M: Mutex, const N: usize> Callbacks for &TargetQueue<M, N> {
     fn append(&mut self, time: Instant, value: u32) {
         TargetQueue::append(self, time, value)
     }

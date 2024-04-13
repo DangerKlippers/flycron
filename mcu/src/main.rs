@@ -266,7 +266,7 @@ mod app {
     )]
     async fn stepper_move_processor(mut cx: stepper_move_processor::Context) {
         loop {
-            Clock::delay(Duration::millis(100)).await;
+            Clock::delay(Duration::millis(20)).await;
             crate::stepper_emulation::process_moves(&mut cx);
         }
     }
