@@ -24,7 +24,7 @@ pub const TARGET_QUEUE_DEPTH: usize = 2000;
 
 pub struct MutexWrapper;
 
-impl stepperemu::Mutex for MutexWrapper {
+impl stepperemu::target_queue::Mutex for MutexWrapper {
     type Inner<T> = BlockingMutex<CriticalSectionRawMutex, T>;
 
     fn new<T>(val: T) -> Self::Inner<T> {
@@ -36,7 +36,7 @@ impl stepperemu::Mutex for MutexWrapper {
     }
 }
 
-pub type TargetQueue = stepperemu::TargetQueue<MutexWrapper, TARGET_QUEUE_DEPTH>;
+pub type TargetQueue = stepperemu::target_queue::TargetQueue<MutexWrapper, TARGET_QUEUE_DEPTH>;
 
 pub fn process_moves(cx: &mut crate::app::stepper_move_processor::Context) {
     cx.shared.command_state.lock(|cs| {
