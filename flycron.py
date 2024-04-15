@@ -111,8 +111,23 @@ class Flycron:
         self.slew_limit_throttle = SlewrateLimit(2, "throttle", {})
         self.slew_limit_throttle.load(config)
 
-        self.throttle_min = config.getfloat("throttle_min", 0.0)
-        self.throttle_max = config.getfloat("throttle_max", 1.0)
+        self.throttle_min = self.config_throttle_min = config.getfloat(
+            "throttle_min", 0.0
+        )
+        self.throttle_max = self.config_throttle_max = config.getfloat(
+            "throttle_max", 1.0
+        )
+        if self.throttle_max < self.throttle_min:
+            raise config.error(
+                "throttle_max=%f can't be lower than throttle_min=%f"
+                % (self.throttle_max, self.throttle_min)
+            )
+
+        if self.throttle_min > self.throttle_max:
+            raise config.error(
+                "throttle_min=%f can't be higher than throttle_max=%f"
+                % (self.throttle_min, self.throttle_max)
+            )
 
         self.printer.register_event_handler("klippy:connect", self._handle_connect)
         self.printer.register_event_handler("klippy:mcu_identify", self._mcu_identify)
@@ -145,6 +160,13 @@ class Flycron:
             self.name,
             self.cmd_FLYCRON_SETTHROTTLE_LIMIT,
             desc=self.cmd_FLYCRON_SETTHROTTLE_LIMIT_help,
+        )
+        gcode.register_mux_command(
+            "FLYCRON_RESETTHROTTLE_LIMIT",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_RESETTHROTTLE_LIMIT,
+            desc=self.cmd_FLYCRON_RESETTHROTTLE_LIMIT_help,
         )
         gcode.register_mux_command(
             "FLYCRON_GET_POSITION",
@@ -226,7 +248,7 @@ class Flycron:
         return self._stepper
 
     cmd_FLYCRON_SETPID_help = """
-    Sets PID parameters for the controller
+    Sets PID parameters for the controller.
     """
 
     def cmd_FLYCRON_SETPID(self, gcmd):
@@ -241,7 +263,7 @@ class Flycron:
         self._apply()
 
     cmd_FLYCRON_SETFILTER_help = """
-    Set observer alpha/beta filter parameters
+    Set observer alpha/beta filter parameters.
     """
 
     def cmd_FLYCRON_SETFILTER(self, gcmd):
@@ -250,11 +272,11 @@ class Flycron:
         self._apply()
 
     cmd_FLYCRON_SETPOINT_help = """
-    Sets the setpoint of a Flycron controller
+    Sets the setpoint of a Flycron controller.
     """
 
     cmd_FLYCRON_SETSLEW_help = """
-    Sets the slew rate limits of the final throttle output
+    Sets the slew rate limits of the final throttle output.
     """
 
     def cmd_FLYCRON_SETSLEW(self, gcmd):
@@ -269,16 +291,32 @@ class Flycron:
         self._apply()
 
     cmd_FLYCRON_SETTHROTTLE_LIMIT_help = """
-    Sets the slew rate limits of the final throttle output
+    Sets the slew rate limits of the final throttle output.
     """
 
     def cmd_FLYCRON_SETTHROTTLE_LIMIT(self, gcmd):
-        self.throttle_min = gcmd.get_float("MIN", self.throttle_min)
-        self.throttle_max = gcmd.get_float("MAX", self.throttle_max)
+        min = gcmd.get_float("MIN", self.throttle_min)
+        max = gcmd.get_float("MAX", self.throttle_max)
+        if max < min:
+            raise gcmd.respond_error("MAX=%f can't be lower than MIN=%f" % (max, min))
+        if min > max:
+            raise gcmd.respond_error("MIN=%f can't be higher than MAX=%f" % (min, max))
+
+        self.throttle_min = min
+        self.throttle_max = max
+        self._apply()
+
+    cmd_FLYCRON_RESETTHROTTLE_LIMIT_help = """
+    Resets the slew rate limits of the final throttle output to the initial config values.
+    """
+
+    def cmd_FLYCRON_RESETTHROTTLE_LIMIT(self, gcmd):
+        self.throttle_min = self.config_throttle_min
+        self.throttle_max = self.config_throttle_max
         self._apply()
 
     cmd_FLYCRON_GET_POSITION_help = """
-    Gets the current commanded and actual positions from a Flycron controller
+    Gets the current commanded and actual positions from a Flycron controller.
     """
 
     def cmd_FLYCRON_GET_POSITION(self, gcmd):
@@ -301,7 +339,7 @@ class Flycron:
         )
 
     cmd_FLYCRON_ENCODER_SET_help = """
-    Gets the current commanded and actual positions from a Flycron controller
+    Gets the current commanded and actual positions from a Flycron controller.
     """
 
     def cmd_FLYCRON_ENCODER_SET(self, gcmd):
