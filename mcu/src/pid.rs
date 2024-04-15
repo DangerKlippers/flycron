@@ -134,7 +134,7 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
             current_position,
             1.0 / (PID_RATE as f32),
         );
-        let throttle = output.output;
+        let mut throttle = output.output;
 
         if !cx
             .shared
@@ -146,6 +146,14 @@ pub async fn pid_loop_task(cx: crate::app::pid_loop::Context<'_>) {
                 .last_throttle
                 .store(0.0, portable_atomic::Ordering::SeqCst);
             continue;
+        }
+
+        let force = cx
+            .shared
+            .throttle_force
+            .load(portable_atomic::Ordering::Relaxed);
+        if force >= 0.0 && force <= 1.0 {
+            throttle = force;
         }
 
         let scaled_throttle = throttle.clamp(
@@ -234,8 +242,11 @@ pub fn pid_set_mass(context: &mut CommandContext, mass_grams: u32) {
 
 #[klipper_command]
 pub fn pid_set_throttle_limits(context: &mut CommandContext, min: u32, max: u32) {
-    let min: f32 = unsafe { transmute_copy(&min) };
-    let max: f32 = unsafe { transmute_copy(&max) };
+    let mut min: f32 = unsafe { transmute_copy(&min) };
+    let mut max: f32 = unsafe { transmute_copy(&max) };
+    if min > max {
+        core::mem::swap(&mut min, &mut max);
+    }
     context
         .interfaces
         .throttle_limits
@@ -246,6 +257,15 @@ pub fn pid_set_throttle_limits(context: &mut CommandContext, min: u32, max: u32)
         .throttle_limits
         .1
         .store(max, portable_atomic::Ordering::SeqCst);
+}
+
+#[klipper_command]
+pub fn pid_throttle_force(context: &mut CommandContext, value: u32) {
+    let value: f32 = unsafe { transmute_copy(&value) };
+    context
+        .interfaces
+        .throttle_force
+        .store(value, portable_atomic::Ordering::SeqCst);
 }
 
 #[klipper_command]

@@ -160,6 +160,13 @@ class Flycron:
             self.cmd_FLYCRON_ENCODER_SET,
             desc=self.cmd_FLYCRON_ENCODER_SET_help,
         )
+        gcode.register_mux_command(
+            "FLYCRON_THROTTLE_FORCE",
+            "MCU",
+            self.name,
+            self.cmd_FLYCRON_THROTTLE_FORCE,
+            desc=self.cmd_FLYCRON_THROTTLE_FORCE_help,
+        )
 
     def _mcu_identify(self):
         self.pid_set_gains_cmd = self.mcu.lookup_command(
@@ -183,6 +190,9 @@ class Flycron:
         )
         self.encoder_set_position_cmd = self.mcu.lookup_command(
             "encoder_set_position value=%u"
+        )
+        self.pid_throttle_force_cmd = self.mcu.lookup_command(
+            "pid_throttle_force value=%u"
         )
 
     def _handle_connect(self):
@@ -297,6 +307,14 @@ class Flycron:
     def cmd_FLYCRON_ENCODER_SET(self, gcmd):
         value = gcmd.get_int("POS")
         self.encoder_set_position_cmd.send([value])
+
+    cmd_FLYCRON_THROTTLE_FORCE_help = """
+    Forces the throttle on the controller, set to number outside range 0..1.0 to let PID control.
+    """
+
+    def cmd_FLYCRON_THROTTLE_FORCE(self, gcmd):
+        value = gcmd.get_float("THROTTLE")
+        self.pid_throttle_force_cmd.send([value])
 
 
 def float_to_u32(v):

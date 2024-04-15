@@ -58,6 +58,7 @@ mod app {
         model_params: Channel<CriticalSectionRawMutex, ModelParam, 2>,
         pid_set_enable: portable_atomic::AtomicBool,
         throttle_limits: (portable_atomic::AtomicF32, portable_atomic::AtomicF32),
+        throttle_force: portable_atomic::AtomicF32,
     }
 
     #[local]
@@ -166,6 +167,7 @@ mod app {
                     portable_atomic::AtomicF32::new(0.0),
                     portable_atomic::AtomicF32::new(1.0),
                 ),
+                throttle_force: portable_atomic::AtomicF32::new(-1.0),
             },
             Local { usb_dev },
         )
@@ -192,6 +194,7 @@ mod app {
             &filter_coefs,
             &slew_rate_limits,
             &throttle_limits,
+            &throttle_force,
             &pid_set_enable,
             &model_params,
             &target_queue,
@@ -207,6 +210,7 @@ mod app {
                         filter_coefs: cx.shared.filter_coefs,
                         slew_rate_limits: cx.shared.slew_rate_limits,
                         throttle_limits: cx.shared.throttle_limits,
+                        throttle_force: cx.shared.throttle_force,
                         model_params: cx.shared.model_params,
                         pid_set_enable: cx.shared.pid_set_enable,
                         pid_last_measured_position: cx.shared.last_measured_position,
@@ -287,6 +291,7 @@ mod app {
             &model_params,
             &pid_set_enable,
             &throttle_limits,
+            &throttle_force,
         ]
     )]
     async fn pid_loop(cx: pid_loop::Context) {
